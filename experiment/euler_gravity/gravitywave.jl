@@ -242,9 +242,11 @@ let
   volume_form = FluxDifferencingForm(EntropyConservativeFlux())
   volume_form = WeakForm()
   for useark in (true, false)
+    println("start -----------")
+    println("aseark ", useark)
     for l in 1:nlevels
-      KX = KX_base * 2 ^ (l - 1)
-      KY = KY_base * 2 ^ (l - 1)
+      KX = KX_base * 2^(l - 1)
+      KY = KY_base * 2^(l - 1)
       errors[l] = run(A, FT, N, KX, KY; useark, volume_form)
       @show errors[l]
     end
@@ -253,5 +255,6 @@ let
       @show errors
       @show rates
     end
+    println("finished -----------")
   end
 end
