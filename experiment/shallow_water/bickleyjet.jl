@@ -39,19 +39,21 @@ end
 function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
   Nq = N + 1
 
-  law = ShallowWaterLaw{FT, 2}()
-  
-  cell = LobattoCell{FT, A}(Nq, Nq)
-  v1d = range(FT(-2π), stop=FT(2π), length=K+1)
-  grid = brickgrid(cell, (v1d, v1d); periodic = (true, false))
+  law = ShallowWaterLaw{FT,2}()
+
+  cell = LobattoCell{FT,A}(Nq, Nq)
+  v1d = range(FT(-2π), stop=FT(2π), length=K + 1)
+  grid = brickgrid(cell, (v1d, v1d); periodic=(true, false))
 
   dg = DGSEM(; law, grid, volume_form,
-               surface_numericalflux = RoeFlux())
+    surface_numericalflux=RoeFlux())
 
-  cfl = FT(1 // 8)
-  dt = cfl * step(v1d) / N / sqrt(constants(law).grav)
+  cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
+
+  c = sqrt(constants(law).grav)
+  dt = cfl * min_node_distance(grid) / c
   timeend = @isdefined(_testing) ? 10dt : FT(200)
- 
+
   q = fieldarray(undef, law, grid)
   q .= bickleyjet.(Ref(law), points(grid))
 
@@ -61,8 +63,8 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
     pvd = paraview_collection(joinpath(vtkdir, "timesteps"))
   end
 
-  do_output = function(step, time, q)
-    if outputvtk && step % ceil(Int, timeend / 100 / dt) == 0 
+  do_output = function (step, time, q)
+    if outputvtk && step % ceil(Int, timeend / 100 / dt) == 0
       filename = "step$(lpad(step, 6, '0'))"
       vtkfile = vtk_grid(joinpath(vtkdir, filename), grid)
       P = Bennu.toequallyspaced(cell)
@@ -73,7 +75,7 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
     end
   end
 
-  odesolver = LSRK54(dg, q, dt)
+  odesolver = LSRK144(dg, q, dt)
 
   outputvtk && do_output(0, FT(0), q)
   solve!(q, timeend, odesolver; after_step=do_output)
@@ -86,5 +88,8 @@ let
   N = 3
 
   K = 16
-  run(A, FT, N, K)
+  tic = Base.time()
+  run(A, FT, N, K, volume_form=FluxDifferencingForm(EntropyConservativeFlux()), outputvtk = false)
+  toc = Base.time()
+  println("time for the simulation ", toc - tic)
 end
