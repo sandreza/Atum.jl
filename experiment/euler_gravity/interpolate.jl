@@ -237,26 +237,36 @@ function get_reference(x, y, z, oldx, oldy, oldz)
     ξ2 = rescale(y, ymin, ymax)
     ξ3 = rescale(z, zmin, zmax)
 
-    return (ξ1, ξ2, ξ3)
+    return @SVector[ξ1, ξ2, ξ3]
 end
 
-function cube_interpolate(newgrid, oldgrid)
-    ξlist = [[0.0, 0.0, 0.0] for i in eachindex(newgrid)]
-    elist = zeros(Int, length(newgrid))
+@kernel function cube_kernel!(ξlist, elist, newgrid, x, xinfo, y, yinfo, z, zinfo)
+    I = @index(Global, Linear)
+    xnew, ynew, znew = newgrid[I]
+    e = get_element(xnew, ynew, znew, xinfo, yinfo, zinfo)
+    oldx = view(x, :, e)
+    oldy = view(y, :, e)
+    oldz = view(z, :, e)
+    ξ = get_reference(xnew, ynew, znew, oldx, oldy, oldz)
+    ξlist[I] = ξ
+    elist[I] = e
+end
+
+function cube_interpolate(newgrid, oldgrid; arch=CUDADevice())
+    if arch isa CUDADevice
+        ξlist = CuArray([@SVector[0.0, 0.0, 0.0] for i in eachindex(newgrid)])
+        elist = CuArray(zeros(Int, length(newgrid)))
+    end
     x, y, z = components(grid.points)
     nex, ney, nez = (size(oldgrid.vertices) .- 1)
     xinfo = (extrema(x)..., nex)
     yinfo = (extrema(y)..., ney)
     zinfo = (extrema(z)..., nez)
-    for I in eachindex(newgrid)
-        xnew, ynew, znew = newgrid[I]
-        e = get_element(xnew, ynew, znew, xinfo, yinfo, zinfo)
-        oldx = view(x, :, e)
-        oldy = view(y, :, e)
-        oldz = view(z, :, e)
-        ξ = get_reference(xnew, ynew, znew, oldx, oldy, oldz)
-        ξlist[I] .= ξ
-        elist[I] = e
+    if arch isa CUDADevice
+        kernel! = cube_kernel!(arch, 256)
+        event = kernel!(ξlist, elist, newgrid, x, xinfo, y, yinfo, z, zinfo, ndrange=size(elist))
+        wait(event)
     end
+
     return ξlist, elist
 end
