@@ -20,7 +20,6 @@ interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq⃗, arch=CUDADevice())
 norm(newf[:] - x[1, :])
 
 ##
-
 nx = ny = nz = 8
 newx = range(-1.5e3, 1.5e3, length=nx)
 newy = range(-1.5e3, 1.5e3, length=ny)

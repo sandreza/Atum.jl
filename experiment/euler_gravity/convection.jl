@@ -153,4 +153,4 @@ p = @. (0.4) * (ρe - (ρu^2 + ρv^2 + ρw^2) / (2ρ) - ρ * ϕ)
 # p  = ρ R T
 T = @. p / (ρ * parameters.R)
 θ = @. (parameters.pₒ / p)^(parameters.R / parameters.cp) * T
-## interpolate_field!(newf, θ, elist, ξlist, r, ω, Nq)
+## interpolate_field!(newf, θ, elist, ξlist, r, ω, Nq⃗)
