@@ -4,6 +4,7 @@ using Random
 using StaticArrays
 using StaticArrays: SVector, MVector
 using WriteVTK
+using Statistics
 
 import Atum: boundarystate, source!
 Random.seed!(12345)
@@ -38,7 +39,7 @@ function boundarystate(law::EulerGravityLaw, n⃗, q⁻, aux⁻, _)
     SVector(ρ⁺, ρu⃗⁺..., ρe⁺), aux⁻
 end
 
-function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
+function source!(law::EulerGravityLaw, source, state, aux, dim::Int, directions)
     # Extract the state
     ρ, ρu⃗, ρe = EulerGravity.unpackstate(law, state)
 
@@ -55,9 +56,10 @@ function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     damping_profile = -exp(-(L - z) / s_ℓ)
 
     # Apply convective forcing
-    source[2:4] += λ * damping_profile * ρu⃗
+    source[2] += λ * damping_profile * ρu⃗[1]
+    source[3] += λ * damping_profile * ρu⃗[2]
+    source[4] += λ * damping_profile * ρu⃗[3]
     source[5] += ρ * radiation_profile
-
 
     return nothing
 end
@@ -85,9 +87,9 @@ function initial_condition(law, x⃗)
 
     SVector(ρ, ρu, ρv, ρw, ρe)
 end
-
-# using CUDA
-A = Array
+##
+using CUDA
+A = CuArray
 # A = Array
 FT = Float64
 N = 3
@@ -129,22 +131,13 @@ if outputvtk
 end
 
 do_output = function (step, time, q)
-    if outputvtk && step % ceil(Int, timeend / 100 / dt) == 0
-        filename = "step$(lpad(step, 6, '0'))"
-        vtkfile = vtk_grid(joinpath(vtkdir, filename), grid)
-        P = Bennu.toequallyspaced(cell)
-        ρθ = last(components(q))
-        vtkfile["ρθ"] = vec(Array(P * ρθ))
-        vtk_save(vtkfile)
-        pvd[time] = vtkfile
-    elseif step % ceil(Int, timeend / 100 / dt) == 0
+    if step % ceil(Int, timeend / 100 / dt) == 0
         println("simulation is ", time / timeend * 100, " percent complete")
     end
 end
 
 odesolver = LSRK144(dg, q, dt)
 
-outputvtk && do_output(0, FT(0), q)
 tic = time()
 solve!(q, timeend, odesolver; after_step=do_output)
 outputvtk && vtk_save(pvd)
@@ -153,11 +146,11 @@ println("The time for the simulation is ", toc - tic)
 println(q[1])
 
 ##
-ρ, ρu, ρv, ρw, ρe = components(q0)
+x, y, z = components(grid.points)
+ρ, ρu, ρv, ρw, ρe = components(q)
 ϕ = 9.81 * z
 p = @. (0.4) * (ρe - (ρu^2 + ρv^2 + ρw^2) / (2ρ) - ρ * ϕ)
 # p  = ρ R T
 T = @. p / (ρ * parameters.R)
 θ = @. (parameters.pₒ / p)^(parameters.R / parameters.cp) * T
-
 ## interpolate_field!(newf, θ, elist, ξlist, r, ω, Nq)

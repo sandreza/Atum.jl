@@ -1,3 +1,5 @@
+using KernelAbstractions, CUDAKernels
+
 """
     baryweights(r)
 returns the barycentric weights associated with the array of points `r`
@@ -42,16 +44,6 @@ function lagrange_pole(ξ, r, ω, i, ξcheck)
         return pole, ii, i
     end
 end
-
-#=
-@assert length(x⃗) == length(r) == length(ω)
-index_check = [checkgl(x⃗[i], r[i]) for eachindex(r)]
-for rx⃗ in eachindex(r) 
-    for i in eachindex(rx⃗)
-        pole, index = lagrange_pole(ξ, r, ω, i, ξcheck)
-    end
-end
-=#
 
 function lagrange_eval(f, newx, newy, newz, rx, ry, rz, ωx, ωy, ωz)
     icheck = checkgl(newx, rx)
@@ -103,8 +95,8 @@ function lagrange_eval_3(f, ξ, r, ω, Nq)
     icheck = checkgl(newx, rx)
     jcheck = checkgl(newy, ry)
     kcheck = checkgl(newz, rz)
-    numerator = zeros(1)
-    denominator = zeros(1)
+    numerator = 0.0
+    denominator = 0.0
     for k in eachindex(rz)
         polez, kk, k = lagrange_pole(newz, rz, ωz, k, kcheck)
         for j in eachindex(ry)
@@ -165,32 +157,6 @@ function lagrange_eval_nb(f, ξ, r, ω)
     return numerator[1] / denominator[1]
 end
 
-
-## goal, figure out data structures to write kernel
-e_num = 4
-newgrid = zeros(e_num, e_num, e_num) # number of elements in grid
-newf = 0 * newgrid
-ξlist = -ones(3, length(newgrid)) # same point in each element 
-elist = collect(1:(e_num^3))
-
-r = [cell.points_1d[i][:] for i in eachindex(cell.points_1d)]
-ω = [baryweights(cell.points_1d[i][:]) for i in eachindex(cell.points_1d)]
-# ω = [cell.weights_1d[i][:] for i in eachindex(cell.weights_1d)]
-bw[1]
-ξ = [0.0, 0.0, 0.0]
-# ξ = [-1.0, -1.0, -1.0]
-icheck = checkgl(0.0, r[1])
-#=
-@benchmark let
-    for I in eachindex(newf)
-        e = elist[I]
-        ξ = ξlist[:, I]
-        newf[I] = lagrange_eval(reshape(x[:, e], Nq, Nq, Nq), ξ..., r..., ω...)
-    end
-end
-=#
-##
-using KernelAbstractions
 @kernel function first_pass!(newf, oldf, elist, ξlist, r, ω, ::Val{Nq}) where {Nq}
     I = @index(Global, Linear)
     oldfijk = @private Nq
@@ -210,9 +176,87 @@ end
     newf[I] = lagrange_eval_3(oldfijk, ξ, r, ω, Nq)
 end
 
-function interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq)
-    kernel = second_pass!(CPU(), 16)
+@kernel function a7_pass!(newf, oldf, elist, ξlist, r, ω, ::Val{Nq}) where {Nq}
+    I = @index(Global, Linear)
+    ξ = ξlist[I]
+    e = elist[I]
+    oldfijk = view(oldf, :, e)
+    newx, newy, newz = ξ
+    rx, ry, rz = r
+    ωx, ωy, ωz = ω
+    icheck = checkgl(newx, rx)
+    jcheck = checkgl(newy, ry)
+    kcheck = checkgl(newz, rz)
+    numerator = 0.0
+    denominator = 0.0
+    for k in eachindex(rz)
+        polez, kk, k = lagrange_pole(newz, rz, ωz, k, kcheck)
+        for j in eachindex(ry)
+            poley, jj, j = lagrange_pole(newy, ry, ωy, j, jcheck)
+            for i in eachindex(rx)
+                polex, ii, i = lagrange_pole(newx, rx, ωx, i, icheck)
+                II = ii + Nq[1] * (jj - 1 + Nq[2] * (kk - 1))
+                poles = polex * poley * polez
+                @inbounds numerator += oldfijk[II] * poles
+                denominator += poles
+            end
+        end
+    end
+    newf[I] = numerator / denominator
+end
+
+function interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq; arch=CUDADevice(), blocksize=256)
+    kernel = a7_pass!(arch, blocksize)
     event = kernel(newf, oldf, elist, ξlist, r, ω, Val(Nq), ndrange=size(newf))
     wait(event)
     return nothing
+end
+
+function get_element(xnew, ynew, znew, xinfo, yinfo, zinfo)
+    xmin, xmax, nex = xinfo
+    ymin, ymax, ney = yinfo
+    zmin, zmax, nez = zinfo
+    ex = ceil(Int, (xnew - xmin) / (xmax - xmin) * nex)
+    ex = min(max(ex, 1), nex)
+    ey = ceil(Int, (ynew - ymin) / (ymax - ymin) * ney)
+    ey = min(max(ey, 1), ney)
+    ez = ceil(Int, (znew - zmin) / (zmax - zmin) * nez)
+    ez = min(max(ez, 1), nez)
+    e = ex + nex * (ey - 1 + ney * (ez - 1))
+    return e
+end
+
+rescale(x, xmin, xmax) = 2 * (x - xmin) / (xmax - xmin) - 1
+
+function get_reference(x, y, z, oldx, oldy, oldz)
+    xmin, xmax = extrema(oldx)
+    ymin, ymax = extrema(oldy)
+    zmin, zmax = extrema(oldz)
+
+    ξ1 = rescale(x, xmin, xmax)
+    ξ2 = rescale(y, ymin, ymax)
+    ξ3 = rescale(z, zmin, zmax)
+
+    return (ξ1, ξ2, ξ3)
+end
+
+function cube_interpolate(newgrid, oldgrid)
+    ξlist = [[0.0, 0.0, 0.0] for i in eachindex(newgrid)]
+    elist = zeros(Int, length(newgrid))
+    x, y, z = components(grid.points)
+    nex, ney, nez = (size(oldgrid.vertices) .- 1)
+    xinfo = (extrema(x)..., nex)
+    yinfo = (extrema(y)..., ney)
+    zinfo = (extrema(z)..., nez)
+    for I in eachindex(newgrid)
+        xnew, ynew, znew = newgrid[I]
+        e = get_element(xnew, ynew, znew, xinfo, yinfo, zinfo)
+        oldx = view(x, :, e)
+        oldy = view(y, :, e)
+        oldz = view(z, :, e)
+        ξ = get_reference(xnew, ynew, znew, oldx, oldy, oldz)
+        ξlist[I] .= ξ
+        elist[I] = e
+    end
+    return ξlist, elist
 end

@@ -7,68 +7,55 @@ v3d = range(FT(0), stop=FT(3.0e3), length=K + 1)
 grid = brickgrid(cell, (v1d, v2d, v3d); periodic=(true, true, false))
 x⃗ = points(grid)
 x, y, z = components(x⃗)
-xC = mean(x, dims=1)[:]
-yC = mean(y, dims=1)[:]
-zC = mean(z, dims=1)[:]
+
+r = Tuple([cell.points_1d[i][:] for i in eachindex(cell.points_1d)])
+ω = Tuple([CuArray(baryweights(cell.points_1d[i][:])) for i in eachindex(cell.points_1d)])
+
+elist = CuArray(1:64)
+ξlist = CuArray([@SVector[-1.0, 0.0, 0.0] for i in 1:64])
+oldf = x
+newf = CuArray(collect(1:64) .* 1.0)
+Nq⃗ = (Nq, Nq, Nq)
+interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq⃗, arch= CUDADevice())
+##
+3+3
+# ω = [cell.weights_1d[i][:] for i in eachindex(cell.weights_1d)]
+#=
+bw[1]
+ξ = [0.0, 0.0, 0.0]
+ξ = [-1.0, -1.0, -1.0]
+icheck = checkgl(0.0, r[1])
+newf = lagrange_eval(reshape(x[:, 1], Nq, Nq, Nq), ξ..., r..., ω...)
+=#
+
+
+## goal, figure out data structures to write kernel
+#=
+e_num = 4
+newgrid = zeros(e_num, e_num, e_num) # number of elements in grid
+newf = 0 * newgrid
+ξlist = -ones(3, length(newgrid)) # same point in each element 
+elist = collect(1:(e_num^3))
 
 r = [cell.points_1d[i][:] for i in eachindex(cell.points_1d)]
 ω = [baryweights(cell.points_1d[i][:]) for i in eachindex(cell.points_1d)]
 # ω = [cell.weights_1d[i][:] for i in eachindex(cell.weights_1d)]
 bw[1]
 ξ = [0.0, 0.0, 0.0]
-ξ = [-1.0, -1.0, -1.0]
+# ξ = [-1.0, -1.0, -1.0]
 icheck = checkgl(0.0, r[1])
-newf = lagrange_eval(reshape(x[:, 1], Nq, Nq, Nq), ξ..., r..., ω...)
+=#
+#=
+@benchmark let
+    for I in eachindex(newf)
+        e = elist[I]
+        ξ = ξlist[:, I]
+        newf[I] = lagrange_eval(reshape(x[:, e], Nq, Nq, Nq), ξ..., r..., ω...)
+    end
+end
+=#
 
 ##
-function get_element(xnew, ynew, znew, xinfo, yinfo, zinfo)
-    xmin, xmax, nex = xinfo
-    ymin, ymax, ney = yinfo
-    zmin, zmax, nez = zinfo
-    ex = ceil(Int, (xnew - xmin) / (xmax - xmin) * nex)
-    ex = min(max(ex, 1), nex)
-    ey = ceil(Int, (ynew - ymin) / (ymax - ymin) * ney)
-    ey = min(max(ey, 1), ney)
-    ez = ceil(Int, (znew - zmin) / (zmax - zmin) * nez)
-    ez = min(max(ez, 1), nez)
-    e = ex + nex * (ey - 1 + ney * (ez - 1))
-    return e
-end
-
-rescale(x, xmin, xmax) = 2 * (x - xmin) / (xmax - xmin) - 1
-
-function get_reference(x, y, z, oldx, oldy, oldz)
-    xmin, xmax = extrema(oldx)
-    ymin, ymax = extrema(oldy)
-    zmin, zmax = extrema(oldz)
-
-    ξ1 = rescale(x, xmin, xmax)
-    ξ2 = rescale(y, ymin, ymax)
-    ξ3 = rescale(z, zmin, zmax)
-
-    return (ξ1, ξ2, ξ3)
-end
-
-function cube_interpolate(newgrid, oldgrid)
-    ξlist = [[0.0, 0.0, 0.0] for i in eachindex(newgrid)]
-    elist = zeros(Int, length(newgrid))
-    x, y, z = components(grid.points)
-    nex, ney, nez = (size(oldgrid.vertices) .- 1)
-    xinfo = (extrema(x)..., nex)
-    yinfo = (extrema(y)..., ney)
-    zinfo = (extrema(z)..., nez)
-    for I in eachindex(newgrid)
-        xnew, ynew, znew = newgrid[I]
-        e = get_element(xnew, ynew, znew, xinfo, yinfo, zinfo)
-        oldx = view(x, :, e)
-        oldy = view(y, :, e)
-        oldz = view(z, :, e)
-        ξ = get_reference(xnew, ynew, znew, oldx, oldy, oldz)
-        ξlist[I] .= ξ
-        elist[I] = e
-    end
-    return ξlist, elist
-end
 
 ##
 newgrid = [[x[1, e], y[1, e], z[1, e]] for e in 1:64]
