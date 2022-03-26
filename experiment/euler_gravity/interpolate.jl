@@ -216,33 +216,3 @@ function interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq)
     wait(event)
     return nothing
 end
-
-
-##
-e_num = 4
-newgrid = zeros(e_num, e_num, e_num) # number of elements in grid
-newf = 0 * newgrid
-ξlist = [(-1.0, -1.0, -1.0) for i in eachindex(newgrid)] # same point in each element 
-elist = collect(1:(e_num^3))
-Nq = (4, 4, 4)
-oldf = copy(z)
-interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq)
-
-for I in eachindex(newgrid)
-    oldfijk = zeros(Nq)
-    ξ = ξlist[I]
-    e = elist[I]
-    for II in eachindex(oldfijk)
-        oldfijk[II] = oldf[II, e]
-    end
-    newf[I] = lagrange_eval_2(oldfijk, ξ, r, ω)
-end
-
-norm(newf[:] - oldf[1, :])
-
-#=
-newgrid = randn(10, 10, 10)
-ξlist = 2* (rand(3, length(newgrid)) .- 0.5)
-elist = randn(length(newgrid))
-@benchmark interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq)
-=#
