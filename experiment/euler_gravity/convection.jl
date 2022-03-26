@@ -55,8 +55,9 @@ function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     damping_profile = -exp(-(L - z) / s_ℓ)
 
     # Apply convective forcing
-    source[2:4] += λ * damping_profile * ρu
+    source[2:4] += λ * damping_profile * ρu⃗
     source[5] += ρ * radiation_profile
+
 
     return nothing
 end
@@ -104,8 +105,8 @@ Nq = N + 1
 law = EulerGravityLaw{FT,3}()
 # pp = 2
 cell = LobattoCell{FT,A}(Nq, Nq, Nq)
-v1d = range(FT(-1.5e3), stop=FT(1.5e3), length=K+1)
-v2d = range(FT(-1.5e3), stop=FT(1.5e3), length=K+1)
+v1d = range(FT(-1.5e3), stop=FT(1.5e3), length=K + 1)
+v2d = range(FT(-1.5e3), stop=FT(1.5e3), length=K + 1)
 v3d = range(FT(0), stop=FT(3.0e3), length=K + 1)
 grid = brickgrid(cell, (v1d, v2d, v3d); periodic=(true, true, false))
 x⃗ = points(grid)
@@ -116,7 +117,7 @@ cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c
 println(" the dt is ", dt)
-timeend = 2 * 60 * 60
+timeend = 1000
 
 q = fieldarray(undef, law, grid)
 q .= initial_condition.(Ref(law), points(grid))
@@ -152,8 +153,11 @@ println("The time for the simulation is ", toc - tic)
 println(q[1])
 
 ##
+ρ, ρu, ρv, ρw, ρe = components(q0)
+ϕ = 9.81 * z
+p = @. (0.4) * (ρe - (ρu^2 + ρv^2 + ρw^2) / (2ρ) - ρ * ϕ)
+# p  = ρ R T
+T = @. p / (ρ * parameters.R)
+θ = @. (parameters.pₒ / p)^(parameters.R / parameters.cp) * T
 
-x, y, z = components(x⃗)
-xC = mean(x, dims=1)[:]
-yC = mean(y, dims=1)[:]
-zC = mean(z, dims=1)[:]
+## interpolate_field!(newf, θ, elist, ξlist, r, ω, Nq)
