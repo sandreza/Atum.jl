@@ -7,9 +7,9 @@ export RLSRK144, RLSRK54
 export ARK23
 
 function solve!(q, timeend, solver;
-                after_step::Function = (x...) -> nothing,
-                after_stage::Function = (x...) -> nothing,
-                adjust_final = true)
+  after_step::Function=(x...) -> nothing,
+  after_stage::Function=(x...) -> nothing,
+  adjust_final=true)
   finalstep = false
   step = 0
   while true
@@ -25,24 +25,25 @@ function solve!(q, timeend, solver;
   end
 end
 
-mutable struct LSRK{FT, AT, NS, RHS}
+mutable struct LSRK{FT,AT,NS,RHS}
   dt::FT
   time::FT
   rhs!::RHS
   dq::AT
-  rka::NTuple{NS, FT}
-  rkb::NTuple{NS, FT}
-  rkc::NTuple{NS, FT}
+  rka::NTuple{NS,FT}
+  rkb::NTuple{NS,FT}
+  rkc::NTuple{NS,FT}
 
   function LSRK(rhs!, rka, rkb, rkc, q, dt, t0)
-      FT = eltype(eltype(q))
-      dq = fieldarray(q)
-      fill!(dq, zero(eltype(q)))
-      AT = typeof(q)
-      RHS = typeof(rhs!)
-      new{FT, AT, length(rka), RHS}(FT(dt), FT(t0), rhs!, dq, rka, rkb, rkc)
+    FT = eltype(eltype(q))
+    dq = fieldarray(q)
+    fill!(dq, zero(eltype(q)))
+    AT = typeof(q)
+    RHS = typeof(rhs!)
+    new{FT,AT,length(rka),RHS}(FT(dt), FT(t0), rhs!, dq, rka, rkb, rkc)
   end
 end
+
 
 function dostep!(q, lsrk::LSRK, after_stage)
   @unpack rhs!, dq, rka, rkb, rkc, dt, time = lsrk
@@ -56,17 +57,54 @@ function dostep!(q, lsrk::LSRK, after_stage)
   lsrk.time += dt
 end
 
-function LSRK54(rhs!, q, dt; t0 = 0)
+#=
+@kernel function update!(Q, @Const(dQ), rkb, dt)
+  i = @index(Global, Linear)
+  @inbounds begin
+    Q[i] += rkb * dt * dQ[i]
+  end
+end
+
+@kernel function scalar_mul!(dQ, rka)
+  i = @index(Global, Linear)
+  @inbounds begin
+    dQ[i] *= rka
+  end
+end
+
+function dostep!(q, lsrk::LSRK, after_stage)
+  @unpack rhs!, dq, rka, rkb, rkc, dt, time = lsrk
+
+  for stage = 1:length(rka)
+    stagetime = time + rkc[stage] * dt
+    device = Atum.getdevice(rhs!)
+    comp_stream = Event(device)
+    event = scalar_mul!(device, 256)(dq, rka[stage]; ndrange=length(dq),
+      dependencies=(comp_stream,)
+    )
+    wait(event)
+    rhs!(dq, q, stagetime)
+    event = update!(device, 256)(q, dq, rkb[stage], dt; ndrange=length(dq),
+      dependencies=(comp_stream, event)
+    )
+    wait(event)
+    after_stage(stagetime, q)
+  end
+  lsrk.time += dt
+end
+=#
+
+function LSRK54(rhs!, q, dt; t0=0)
   rka, rkb, rkc = coefficients_lsrk54()
   LSRK(rhs!, rka, rkb, rkc, q, dt, t0)
 end
 
-function LSRK144(rhs!, q, dt; t0 = 0)
+function LSRK144(rhs!, q, dt; t0=0)
   rka, rkb, rkc = coefficients_lsrk144()
   LSRK(rhs!, rka, rkb, rkc, q, dt, t0)
 end
 
-mutable struct RLSRK{FT, AT, NS, RHS}
+mutable struct RLSRK{FT,AT,NS,RHS}
   dt::FT
   time::FT
   γ::FT
@@ -74,29 +112,29 @@ mutable struct RLSRK{FT, AT, NS, RHS}
   dq::AT
   q0::AT
   k::AT
-  rka::NTuple{NS, FT}
-  rkb::NTuple{NS, FT}
-  rkb_full::NTuple{NS, FT}
-  rkc::NTuple{NS, FT}
+  rka::NTuple{NS,FT}
+  rkb::NTuple{NS,FT}
+  rkb_full::NTuple{NS,FT}
+  rkc::NTuple{NS,FT}
 
   function RLSRK(rhs!, rka, rkb, rkc, q, dt, t0)
-      FT = eltype(eltype(q))
-      dq = fieldarray(q)
-      fill!(dq, zero(eltype(q)))
-      q0 = fieldarray(q)
-      k = fieldarray(q)
-      # construct standard RK b coefficients
-      rkb_full = zeros(FT, length(rkb))
-      rkb_full[end] = rkb[end]
-      for i in length(rkb)-1:-1:1
-        rkb_full[i] = rka[i+1] * rkb_full[i+1] + rkb[i]
-      end
-      γ = FT(1)
+    FT = eltype(eltype(q))
+    dq = fieldarray(q)
+    fill!(dq, zero(eltype(q)))
+    q0 = fieldarray(q)
+    k = fieldarray(q)
+    # construct standard RK b coefficients
+    rkb_full = zeros(FT, length(rkb))
+    rkb_full[end] = rkb[end]
+    for i in length(rkb)-1:-1:1
+      rkb_full[i] = rka[i+1] * rkb_full[i+1] + rkb[i]
+    end
+    γ = FT(1)
 
-      AT = typeof(q)
-      RHS = typeof(rhs!)
-      new{FT, AT, length(rka), RHS}(FT(dt), FT(t0), γ, rhs!, dq, q0, k,
-                                    rka, rkb, Tuple(rkb_full), rkc)
+    AT = typeof(q)
+    RHS = typeof(rhs!)
+    new{FT,AT,length(rka),RHS}(FT(dt), FT(t0), γ, rhs!, dq, q0, k,
+      rka, rkb, Tuple(rkb_full), rkc)
   end
 end
 
@@ -111,7 +149,7 @@ function dostep!(q, rlsrk::RLSRK{FT}, after_stage) where {FT}
   for stage = 1:length(rka)
     dq .*= rka[stage]
     stagetime = time + rkc[stage] * dt
-    rhs!(k, q, stagetime; increment = false)
+    rhs!(k, q, stagetime; increment=false)
     dq .+= k
     dη += rkb_full[stage] * dt * entropyproduct(rhs!, q, k)
 
@@ -135,12 +173,12 @@ function dostep!(q, rlsrk::RLSRK{FT}, after_stage) where {FT}
   rlsrk.time += dt
 end
 
-function RLSRK54(rhs!, q, dt; t0 = 0)
+function RLSRK54(rhs!, q, dt; t0=0)
   rka, rkb, rkc = coefficients_lsrk54()
   RLSRK(rhs!, rka, rkb, rkc, q, dt, t0)
 end
 
-function RLSRK144(rhs!, q, dt; t0 = 0)
+function RLSRK144(rhs!, q, dt; t0=0)
   rka, rkb, rkc = coefficients_lsrk144()
   RLSRK(rhs!, rka, rkb, rkc, q, dt, t0)
 end
@@ -175,7 +213,7 @@ end
 
 function coefficients_lsrk144()
   rka = (
-     0,
+    0,
     -0.7188012108672410,
     -0.7785331173421570,
     -0.0053282796654044,
@@ -185,7 +223,7 @@ function coefficients_lsrk144()
     -2.0837094552574054,
     -0.7483334182761610,
     -0.7032861106563359,
-     0.0013917096117681,
+    0.0013917096117681,
     -0.0932075369637460,
     -0.9514200470875948,
     -7.1151571693922548,
@@ -228,7 +266,7 @@ function coefficients_lsrk144()
   rka, rkb, rkc
 end
 
-mutable struct ARK{FT, RHS, LINRHS, RKA, RKB, RKC, QHAT, K, FAC, QS}
+mutable struct ARK{FT,RHS,LINRHS,RKA,RKB,RKC,QHAT,K,FAC,QS}
   time::FT
   dt::FT
   dt_fac::FT
@@ -248,15 +286,15 @@ mutable struct ARK{FT, RHS, LINRHS, RKA, RKB, RKC, QHAT, K, FAC, QS}
   split_rhs::Bool
 
   function ARK(rhs!, linrhs!,
-      ex_rka, ex_rkb, ex_rkc,
-      im_rka, im_rkb, im_rkc,
-      q, dt, t0,
-      split_rhs = false)
+    ex_rka, ex_rkb, ex_rkc,
+    im_rka, im_rkb, im_rkc,
+    q, dt, t0,
+    split_rhs=false)
     Qhat = fieldarray(q)
     Nstages = length(ex_rkc)
-    qstages = ntuple(_->fieldarray(q), Nstages - 1)
-    ex_K = ntuple(_->fieldarray(q), Nstages)
-    im_K = ntuple(_->fieldarray(q), Nstages)
+    qstages = ntuple(_ -> fieldarray(q), Nstages - 1)
+    ex_K = ntuple(_ -> fieldarray(q), Nstages)
+    im_K = ntuple(_ -> fieldarray(q), Nstages)
     if isnothing(linrhs!)
       fac = nothing
       dt_fac = dt
@@ -269,43 +307,43 @@ mutable struct ARK{FT, RHS, LINRHS, RKA, RKB, RKC, QHAT, K, FAC, QS}
       dt_fac = dt
     end
     TYPES = typeof.((t0, rhs!, linrhs!,
-                     ex_rka, ex_rkb, ex_rkc,
-                     Qhat, ex_K, fac, qstages))
+      ex_rka, ex_rkb, ex_rkc,
+      Qhat, ex_K, fac, qstages))
     return new{TYPES...}(t0, dt, dt_fac, rhs!, linrhs!,
-                         ex_rka, ex_rkb, ex_rkc,
-                         im_rka, im_rkb, im_rkc,
-                         Qhat, ex_K, im_K, fac, qstages,
-                         split_rhs)
+      ex_rka, ex_rkb, ex_rkc,
+      im_rka, im_rkb, im_rkc,
+      Qhat, ex_K, im_K, fac, qstages,
+      split_rhs)
   end
 end
 
 # This uses the second-order-accurate 3-stage additive Runge--Kutta scheme of
 # Giraldo, Kelly and Constantinescu (2013).
-function ARK23(rhs!, linrhs!, q, dt; t0 = 0, paperversion = false,
-               split_rhs = true)
+function ARK23(rhs!, linrhs!, q, dt; t0=0, paperversion=false,
+  split_rhs=true)
   FT = eltype(eltype(q))
   RT = real(FT)
 
   a32 = RT(paperversion ? (3 + 2 * √2) / 6 : 1 // 2)
   ex_rka = [
-            RT(0)       RT(0)   RT(0)
-            RT(2 - √2)  RT(0)   RT(0)
-            RT(1 - a32) RT(a32) RT(0)
-           ]
+    RT(0) RT(0) RT(0)
+    RT(2 - √2) RT(0) RT(0)
+    RT(1 - a32) RT(a32) RT(0)
+  ]
   ex_rkb = [RT(1 / (2 * √2)), RT(1 / (2 * √2)), RT(1 - 1 / √2)]
   ex_rkc = [RT(0), RT(2 - √2), RT(1)]
 
   im_rka = [
-            RT(0)            RT(0)            RT(0)
-            RT(1 - 1 / √2)   RT(1 - 1 / √2)   RT(0)
-            RT(1 / (2 * √2)) RT(1 / (2 * √2)) RT(1 - 1 / √2)
-           ]
+    RT(0) RT(0) RT(0)
+    RT(1 - 1 / √2) RT(1 - 1 / √2) RT(0)
+    RT(1 / (2 * √2)) RT(1 / (2 * √2)) RT(1 - 1 / √2)
+  ]
   im_rkb = ex_rkb
   im_rkc = ex_rkc
   return ARK(rhs!, linrhs!,
-             ex_rka, ex_rkb, ex_rkc,
-             im_rka, im_rkb, im_rkc,
-             q, RT(dt), RT(t0), split_rhs)
+    ex_rka, ex_rkb, ex_rkc,
+    im_rka, im_rkb, im_rkc,
+    q, RT(dt), RT(t0), split_rhs)
 end
 
 
@@ -324,7 +362,7 @@ function dostep!(q, ark::ARK, after_stage)
   if isnothing(rhs!)
     fill!.(components(ex_K[1]), 0)
   else
-    rhs!(ex_K[1], Q[1], ex_stagetime; increment = false)
+    rhs!(ex_K[1], Q[1], ex_stagetime; increment=false)
   end
 
   # Compute first implicit stage
@@ -333,7 +371,7 @@ function dostep!(q, ark::ARK, after_stage)
     @assert ark.dt === ark.dt_fac
     fill!.(components(im_K[1]), 0)
   else
-    linrhs!(im_K[1], Q[1], im_stagetime; increment = false)
+    linrhs!(im_K[1], Q[1], im_stagetime; increment=false)
   end
 
   if !ark.split_rhs
@@ -360,7 +398,7 @@ function dostep!(q, ark::ARK, after_stage)
     if isnothing(rhs!)
       fill!.(components(ex_K[i]), 0)
     else
-      rhs!(ex_K[i], Q[i], ex_stagetime; increment = false)
+      rhs!(ex_K[i], Q[i], ex_stagetime; increment=false)
     end
 
     # Compute implicit state i
@@ -368,7 +406,7 @@ function dostep!(q, ark::ARK, after_stage)
     if isnothing(linrhs!)
       fill!.(components(im_K[i]), 0)
     else
-      linrhs!(im_K[i], Q[i], im_stagetime; increment = false)
+      linrhs!(im_K[i], Q[i], im_stagetime; increment=false)
     end
 
     if !ark.split_rhs

@@ -43,5 +43,7 @@ end
 
 struct EntropyConservativeFlux <: AbstractNumericalFlux end
 struct KennedyGruberFlux <: AbstractNumericalFlux end
+struct LinearizedGruberFlux <: AbstractNumericalFlux end
+struct RefanovFlux <: AbstractNumericalFlux end
 struct RoeFlux <: AbstractNumericalFlux end
 struct MatrixFlux <: AbstractNumericalFlux end

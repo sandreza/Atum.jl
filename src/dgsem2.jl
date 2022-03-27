@@ -98,24 +98,12 @@ function (dg::FluxSource)(dq, q, time; increment=true)
 end
 
 ## Kernels 
-@kernel function volume_term_dir!(law,
-    dq,
-    q,
-    D,
-    volume_numericalflux,
-    metrics,
-    MJ,
-    MJI,
-    auxstate,
-    add_source,
-    ::Val{dir},
-    ::Val{dim},
-    ::Val{Nq1},
-    ::Val{Nq2},
-    ::Val{Nq3},
-    ::Val{Ns},
-    ::Val{Naux},
-    ::Val{increment}) where {dir,dim,Nq1,Nq2,Nq3,Ns,Naux,increment}
+@kernel function volume_term_dir!(
+    law, dq, q, D, volume_numericalflux, 
+    metrics, MJ, MJI, auxstate, add_source,
+    ::Val{dir}, ::Val{dim}, ::Val{Nq1}, ::Val{Nq2}, ::Val{Nq3}, ::Val{Ns},
+    ::Val{Naux}, ::Val{increment}
+    ) where {dir,dim,Nq1,Nq2,Nq3,Ns,Naux,increment}
     @uniform begin
         FT = eltype(law)
         if dir == 1
