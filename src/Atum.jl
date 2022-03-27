@@ -13,6 +13,7 @@ using UnPack
 include("balancelaw.jl")
 include("numericalfluxes.jl")
 include("dgsem.jl")
+include("dgsem2.jl")
 include("measures.jl")
 include("odesolvers.jl")
 include("bandedsystem.jl")

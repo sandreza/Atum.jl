@@ -5,7 +5,7 @@ using StaticArrays
 using StaticArrays: SVector, MVector
 using WriteVTK
 using Statistics
-
+using BenchmarkTools
 import Atum: boundarystate, source!
 Random.seed!(12345)
 # for lazyness 
@@ -39,7 +39,7 @@ function boundarystate(law::EulerGravityLaw, n⃗, q⁻, aux⁻, _)
     SVector(ρ⁺, ρu⃗⁺..., ρe⁺), aux⁻
 end
 
-function source!(law::EulerGravityLaw, source, state, aux, dim::Int, directions)
+function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     # Extract the state
     ρ, ρu⃗, ρe = EulerGravity.unpackstate(law, state)
 
@@ -94,7 +94,7 @@ A = CuArray
 FT = Float64
 N = 3
 
-K = 4
+K = 16 * 2
 
 vf = FluxDifferencingForm(KennedyGruberFlux())
 println("DOFs = ", (3 + 1) * K, " with VF ", vf)
@@ -113,16 +113,22 @@ v3d = range(FT(0), stop=FT(3.0e3), length=K + 1)
 grid = brickgrid(cell, (v1d, v2d, v3d); periodic=(true, true, false))
 x⃗ = points(grid)
 dg = DGSEM(; law, grid, volume_form, surface_numericalflux=RoeFlux())
+fsdg = FluxSource(; law, grid, volume_form, surface_numericalflux=RoeFlux())
+dg_r = DGSEM(; law, grid, volume_form, surface_numericalflux=RusanovFlux())
 
 cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c
 println(" the dt is ", dt)
-timeend = 1000
+timeend = 60
 
 q = fieldarray(undef, law, grid)
+q0 = fieldarray(undef, law, grid)
 q .= initial_condition.(Ref(law), points(grid))
+q0 .= initial_condition.(Ref(law), points(grid))
+qq = initial_condition.(Ref(law), points(grid))
+dqq = initial_condition.(Ref(law), points(grid))
 
 if outputvtk
     vtkdir = joinpath("output", "gravity_euler", "convection")
@@ -144,8 +150,9 @@ outputvtk && vtk_save(pvd)
 toc = time()
 println("The time for the simulation is ", toc - tic)
 println(q[1])
-
+# @benchmark dg(q0, q, 0.0)
 ##
+#=
 x, y, z = components(grid.points)
 ρ, ρu, ρv, ρw, ρe = components(q)
 ϕ = 9.81 * z
@@ -153,4 +160,5 @@ p = @. (0.4) * (ρe - (ρu^2 + ρv^2 + ρw^2) / (2ρ) - ρ * ϕ)
 # p  = ρ R T
 T = @. p / (ρ * parameters.R)
 θ = @. (parameters.pₒ / p)^(parameters.R / parameters.cp) * T
-## interpolate_field!(newf, θ, elist, ξlist, r, ω, Nq⃗)
+## interpolate_field!(newf, θ, elist, ξlist, r, ω, Nq⃗, arch=CUDADevice())
+=#
