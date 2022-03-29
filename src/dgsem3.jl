@@ -66,7 +66,7 @@ function (dg::SingleDirection)(dq, q, time; increment=true, dir = 3)
         false, # don't add_source
         Val(dir), Val(dim), Val(workgroup[1]), Val(workgroup[2]), Val(workgroup[3]),
         Val(numberofstates(dg.law)), Val(Naux),
-        Val(dir == 1 ? increment : true);
+        Val(increment);
         ndrange,
         dependencies=comp_stream
     )

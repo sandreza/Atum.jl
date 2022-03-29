@@ -9,6 +9,7 @@ using KernelAbstractions
 using KernelAbstractions.Extras: @unroll
 using CUDAKernels
 using UnPack
+using LinearAlgebra
 
 include("balancelaw.jl")
 include("numericalfluxes.jl")
@@ -23,5 +24,7 @@ include("balancelaws/advection.jl")
 include("balancelaws/shallow_water.jl")
 include("balancelaws/euler.jl")
 include("balancelaws/euler_gravity.jl")
+include("balancelaws/EulerTotalEnergy.jl")
+
 
 end # module

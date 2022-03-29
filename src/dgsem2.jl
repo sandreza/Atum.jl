@@ -20,7 +20,7 @@ function Adapt.adapt_structure(to, dg::FluxSource)
 end
 
 function FluxSource(; law, grid, surface_numericalflux,
-    volume_form=WeakForm())
+    volume_form=WeakForm(), auxstate = nothing)
     cell = referencecell(grid)
     M = mass(cell)
     _, J = components(metrics(grid))
@@ -31,8 +31,10 @@ function FluxSource(; law, grid, surface_numericalflux,
     _, faceJ = components(facemetrics(grid))
 
     faceMJ = faceM * faceJ
-
-    auxstate = auxiliary.(Ref(law), points(grid))
+    
+    if isnothing(auxstate)
+        auxstate = auxiliary.(Ref(law), points(grid))
+    end
 
     args = (law, grid, MJ, MJI, faceMJ, auxstate,
         volume_form, surface_numericalflux)
