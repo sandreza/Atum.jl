@@ -8,6 +8,7 @@ using Statistics
 using BenchmarkTools
 using Revise
 using CUDA
+using LinearAlgebra
 
 import Atum: boundarystate, source!
 Random.seed!(12345)
@@ -90,14 +91,14 @@ function initial_condition(law, x⃗)
 end
 
 
-A = Array
-# A = Array
+A = CuArray
 FT = Float64
 N = 3
 
-K = 4
-vf = FluxDifferencingForm(KennedyGruberFlux())
-l_vf = FluxDifferencingForm(Atum.LinearizedKennedyGruberFlux())
+K = 8*2
+vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
+surface_numericalflux = (RoeFlux(), RoeFlux(), RoeFlux())
+l_vf = Atum.LinearizedKennedyGruberFlux()
 println("DOFs = ", (N + 1) * K, " with VF ", vf)
 
 volume_form = vf
@@ -118,13 +119,13 @@ dg = DGSEM(; law, grid, volume_form, surface_numericalflux=RoeFlux())
 fsdg = FluxSource(; law, grid, volume_form, surface_numericalflux=RoeFlux())
 dg_r = DGSEM(; law, grid, volume_form, surface_numericalflux=RusanovFlux())
 dg_sd = SingleDirection(; law, grid, volume_form = l_vf, surface_numericalflux = Atum.LinearizedRefanovFlux())
-
+fsdg2 = FluxSource(; law, grid, volume_form, surface_numericalflux= surface_numericalflux)
 cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
-
+# cfl = 1.75
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c * 1.0
 println(" the dt is ", dt)
-timeend = 60*60
+timeend = 60 * 6
 
 Random.seed!(1234)
 q = fieldarray(undef, law, grid)
@@ -136,6 +137,7 @@ dqq = initial_condition.(Ref(law), points(grid))
 
 aux = Atum.auxiliary.(Ref(law), x⃗, q)
 fsdg.auxstate .= aux
+fsdg2.auxstate .= aux
 dg_sd.auxstate .= aux
 
 fsdg(q0, q, 0.0)
@@ -149,23 +151,20 @@ do_output = function (step, time, q)
 end
 
 tic = time()
-# solve!(q, timeend, odesolver; after_step=do_output)
+solve!(q, timeend, odesolver; after_step=do_output)
 toc = time()
 println("The time for the simulation is ", toc - tic)
 println(q[1])
 fsdg(q0,q, 0.0)
 
-zeroq = q .* 0.0 
-q0 .= q ./ q
-
+#=
 for α ∈ [-8.0, 0.0, 2.0, 3.5, π, 100.0]
-    αq = q .* α
-    Lαq = q .* α
-    v = q .* 1.0
-    Lv = q .* 1.0
-    αqpv =  αq  .+ v
-    Lαqpv =  αq  .+ v
-
+    local αq = q .* α
+    local Lαq = q .* α
+    local v = q .* 1.0
+    local Lv = q .* 1.0
+    local αqpv =  αq  .+ v
+    local Lαqpv =  αq  .+ v
 
     dg_sd(Lαq, αq , 0.0, increment = false)
     dg_sd(Lv, v , 0.0, increment = false)
@@ -173,9 +172,10 @@ for α ∈ [-8.0, 0.0, 2.0, 3.5, π, 100.0]
 
     println(" The error is ", norm(Lαqpv .- (Lαq .+ Lv), Inf))
 end
+=#
 
 
-
+#=
 aux = Atum.auxiliary.(Ref(law), x⃗, q)
 fsdg.auxstate .= aux
 dg_sd.auxstate .= aux
@@ -193,6 +193,7 @@ tnomatvec!(q0, q, comp_stream)
 
 mat = Bennu.batchedbandedmatrix(tnomatvec!, dg.grid, q0, q, 1, 256) # default 1024 too much
 
+α = 2.0
 αq = q .* α
 Lαq = q .* α
 v = q .* 1.0
@@ -219,12 +220,13 @@ testq = fieldarray(undef, law, grid)
 dg_sd(q1, q, 0.0; increment=false)
 mul!(arrayq0, mat, arrayq)
 testq .= q - dt * imrka * q1
-norm(testq - q0, Inf)
+println("the error in applying the operator ", norm(testq - q0, Inf))
 
 # The linear operator is  q0 = q - dt * imrka * dg(q0, q, 0.0)
 lumat = batchedbandedlu!(mat.data) # does indeed mutate the matrix
 
-
 ldiv!(q0, lumat, testq)
 
-norm(q - q0, Inf)
+
+println("The absolute error in solving the linear system ", norm(q - q0, Inf))
+=#

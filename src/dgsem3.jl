@@ -60,7 +60,7 @@ function (dg::SingleDirection)(dq, q, time; increment=true, dir = 3)
 
     comp_stream = volume_term_dir!(device, workgroup)(
         dg.law, dq, q, derivatives_1d(cell)[dir],
-        dg.volume_form.volume_numericalflux,
+        dg.volume_form,
         metrics(dg.grid), dg.MJ, dg.MJI,
         dg.auxstate,
         false, # don't add_source

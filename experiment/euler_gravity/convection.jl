@@ -6,6 +6,9 @@ using StaticArrays: SVector, MVector
 using WriteVTK
 using Statistics
 using BenchmarkTools
+using Revise
+using CUDA
+
 import Atum: boundarystate, source!
 Random.seed!(12345)
 # for lazyness 
@@ -29,8 +32,6 @@ const parameters = (
     s_ℓ=100.0, # sponge exponential decay length scale
     λ=1 / 10.0, # sponge relaxation timescale
 )
-
-# To do: put coordinate in aux⁻
 
 function boundarystate(law::EulerGravityLaw, n⃗, q⁻, aux⁻, _)
     ρ⁻, ρu⃗⁻, ρe⁻ = EulerGravity.unpackstate(law, q⁻)
@@ -87,17 +88,16 @@ function initial_condition(law, x⃗)
 
     SVector(ρ, ρu, ρv, ρw, ρe)
 end
-##
-using CUDA
+
+
 A = CuArray
 # A = Array
 FT = Float64
 N = 3
 
-K = 16 * 2
-
+K = 8
 vf = FluxDifferencingForm(KennedyGruberFlux())
-println("DOFs = ", (3 + 1) * K, " with VF ", vf)
+println("DOFs = ", (N + 1) * K, " with VF ", vf)
 
 volume_form = vf
 
@@ -119,9 +119,9 @@ dg_r = DGSEM(; law, grid, volume_form, surface_numericalflux=RusanovFlux())
 cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 
 c = 330.0 # [m/s]
-dt = cfl * min_node_distance(grid) / c
+dt = cfl * min_node_distance(grid) / c * 1.0
 println(" the dt is ", dt)
-timeend = 60
+timeend = 60*60
 
 q = fieldarray(undef, law, grid)
 q0 = fieldarray(undef, law, grid)
@@ -142,7 +142,7 @@ do_output = function (step, time, q)
     end
 end
 
-odesolver = LSRK144(dg, q, dt)
+odesolver = LSRK144(fsdg, q, dt)
 
 tic = time()
 solve!(q, timeend, odesolver; after_step=do_output)
@@ -150,6 +150,14 @@ outputvtk && vtk_save(pvd)
 toc = time()
 println("The time for the simulation is ", toc - tic)
 println(q[1])
+##
+# dg(q, q0, 0.0, increment = false)
+# dgq = Array(copy(components(q)[1]))
+
+# fsdg(q, q0, 0.0, increment = false)
+# fsdgq = Array(copy(components(q)[1]))
+
+
 # @benchmark dg(q0, q, 0.0)
 ##
 #=

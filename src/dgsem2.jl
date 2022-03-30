@@ -20,7 +20,7 @@ function Adapt.adapt_structure(to, dg::FluxSource)
 end
 
 function FluxSource(; law, grid, surface_numericalflux,
-    volume_form=WeakForm(), auxstate = nothing)
+    volume_form=WeakForm(), auxstate=nothing)
     cell = referencecell(grid)
     M = mass(cell)
     _, J = components(metrics(grid))
@@ -31,9 +31,25 @@ function FluxSource(; law, grid, surface_numericalflux,
     _, faceJ = components(facemetrics(grid))
 
     faceMJ = faceM * faceJ
-    
+
     if isnothing(auxstate)
         auxstate = auxiliary.(Ref(law), points(grid))
+    end
+
+    dim = ndims(cell)
+
+    if volume_form isa Tuple
+        @assert length(volume_form) == dim
+        volume_form = volume_form
+    else
+        volume_form = ntuple(i -> volume_form, dim)
+    end
+
+    if surface_numericalflux isa Tuple
+        @assert length(surface_numericalflux) == dim
+        surface_numericalflux = surface_numericalflux
+    else
+        surface_numericalflux = ntuple(i -> surface_numericalflux, dim)
     end
 
     args = (law, grid, MJ, MJI, faceMJ, auxstate,
@@ -60,10 +76,13 @@ function (dg::FluxSource)(dq, q, time; increment=true)
     workgroup = ntuple(i -> i <= dim ? Nq⃗[i] : 1, 3)
     ndrange = (Ne * workgroup[1], Base.tail(workgroup)...)
 
+    volume_form = dg.volume_form
+    surface_flux = dg.surface_numericalflux
+
     for dir in 1:dim
         comp_stream = volume_term_dir!(device, workgroup)(
             dg.law, dq, q, derivatives_1d(cell)[dir],
-            dg.volume_form.volume_numericalflux,
+            volume_form[dir],
             metrics(dg.grid), dg.MJ, dg.MJI,
             dg.auxstate,
             dir == 1, # add_source
@@ -87,7 +106,7 @@ function (dg::FluxSource)(dq, q, time; increment=true)
             dg.law, dq, q,
             Val(Bennu.connectivityoffsets(cell, Val(2))),
             Val(dir),
-            dg.surface_numericalflux,
+            surface_flux[dir],
             dg.MJI, faceix⁻, faceix⁺, dg.faceMJ, facenormal, boundaryfaces(grid),
             dg.auxstate,
             Val(dim);
