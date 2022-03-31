@@ -119,7 +119,7 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 5
+Kv = 8
 Kh = 12
 
 law = EulerTotalEnergyLaw{FT, dim}()
@@ -145,6 +145,7 @@ end
 
 state = fieldarray(undef, law, grid)
 test_state = fieldarray(undef, law, grid)
+old_state = fieldarray(undef, law, grid)
 cpu_state = fieldarray(undef, law, cpu_grid)
 cpu_state .= baroclinic_wave.(cpu_x⃗, Ref(bw_p))
 gpu_components = components(state)
@@ -154,6 +155,7 @@ for i in eachindex(gpu_components)
 end
 # state .= baroclinic_wave.(x⃗, Ref(bw_p)) # this line gives the error
 test_state .= state
+old_state .= state
 aux = sphere_auxiliary.(Ref(law), x⃗, state)
 old_aux = sphere_auxiliary.(Ref(law), x⃗, state)
 bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), state, aux)
@@ -185,7 +187,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 end
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux())
+sf = (RoeFlux(), RoeFlux(), RoeFlux())
 
 linearized_vf = Atum.LinearizedKennedyGruberFlux()
 linearized_sf = Atum.LinearizedRefanovFlux()
@@ -238,27 +240,36 @@ println("maximum y-velocity ", maximum(ρv ./ ρ))
 println("maximum z-velocity ", maximum(ρw ./ ρ))
 
 ##
+vcfl = 120.0
+hcfl = 0.5
+Δx = min_node_distance(grid, dims = 1)
+Δy = min_node_distance(grid, dims = 2)
+Δz = min_node_distance(grid, dims = 3)
+vdt = vcfl * Δz / c_max 
+hdt = hcfl * Δx / c_max
+dt = min(vdt, hdt)
 
-test_state .= state
+test_state .= old_state
 tic = time()
-partitions = 1:36*8
+partitions = 1:24*10
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), x⃗, test_state)
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
-    dt = 240.0
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
-    timeend = 60 * 60 * 24 * 8/ partitions[end]
+    timeend = 60 * 60 * 24 * 10/ partitions[end]
     # solve!(test_state, timeend, odesolver; after_step=do_output)
     solve!(test_state, timeend, odesolver)
-    println("--------")
-    println("done with ", timeend)
-    println("partition ", i)
-    ρ, ρu, ρv, ρw, _ = components(test_state)
-    println("maximum x-velocity ", maximum(ρu ./ ρ))
-    println("maximum y-velocity ", maximum(ρv ./ ρ))
-    println("maximum z-velocity ", maximum(ρw ./ ρ))
-    println("-----")
+    if i%4==0
+        println("--------")
+        println("done with ", timeend)
+        println("partition ", i)
+        ρ, ρu, ρv, ρw, _ = components(test_state)
+        println("maximum x-velocity ", maximum(ρu ./ ρ))
+        println("maximum y-velocity ", maximum(ρv ./ ρ))
+        println("maximum z-velocity ", maximum(ρw ./ ρ))
+        println("-----")
+    end
 end
 toc = time()
 println("The time for the simulation is ", toc - tic)
