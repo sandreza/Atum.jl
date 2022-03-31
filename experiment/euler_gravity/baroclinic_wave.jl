@@ -119,14 +119,18 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 3
-Kh = 3
+Kv = 5
+Kh = 12
 
 law = EulerTotalEnergyLaw{FT, dim}()
 cell = LobattoCell{FT, A}(Nq, Nq, Nq)
+cpu_cell = LobattoCell{FT, Array}(Nq, Nq, Nq)
 vert_coord = range(FT(bw_p.a), stop=FT(bw_p.a + bw_p.H), length=Kv+1)
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
+
+cpu_grid = cubedspheregrid(cpu_cell, vert_coord, Kh)
+cpu_x⃗ = points(cpu_grid)
 
 function baroclinic_wave(x⃗, param)
     x, y, z = x⃗
@@ -139,18 +143,43 @@ function baroclinic_wave(x⃗, param)
     SVector(bw_ρ, bw_ρu⃗..., bw_ρe)
 end
 
-state = baroclinic_wave.(x⃗, Ref(bw_p))
+state = fieldarray(undef, law, grid)
+test_state = fieldarray(undef, law, grid)
+cpu_state = fieldarray(undef, law, cpu_grid)
+cpu_state .= baroclinic_wave.(cpu_x⃗, Ref(bw_p))
+gpu_components = components(state)
+cpu_components = components(cpu_state)
+for i in eachindex(gpu_components)
+    gpu_components[i] .= A(cpu_components[i])
+end
+# state .= baroclinic_wave.(x⃗, Ref(bw_p)) # this line gives the error
+test_state .= state
 aux = sphere_auxiliary.(Ref(law), x⃗, state)
+old_aux = sphere_auxiliary.(Ref(law), x⃗, state)
 bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), state, aux)
+bw_density = components(state)[1]
+bw_soundspeed =  Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
+c_max = maximum(bw_soundspeed)
+
+function boundarystate(law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, _)
+    ρ⁻, ρu⃗⁻, ρe⁻ = EulerTotalEnergy.unpackstate(law, q⁻)
+    ρ⁺, ρe⁺ = ρ⁻, ρe⁻
+    ρu⃗⁺ = ρu⃗⁻ - 2 * (n⃗' * ρu⃗⁻) * n⃗
+    SVector(ρ⁺, ρu⃗⁺..., ρe⁺), aux⁻
+end
 
 function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     # Extract the state
     _, ρu⃗, _ = EulerTotalEnergy.unpackstate(law, state)
-    _, source_ρu⃗, _ = EulerTotalEnergy.unpackstate(law, source)
+    # _, source_ρu⃗, _ = EulerTotalEnergy.unpackstate(law, source)
 
-    Ω = @SVector [-0, -0, 2π/86400]
+    Ω = @SVector [-0, -0, 2π / 86400]
 
-    source_ρu⃗ += -2Ω × ρu⃗
+    coriolis = -2Ω × ρu⃗
+    # source[2:4] += -2Ω × ρu⃗
+    source[2] = coriolis[1]
+    source[3] = coriolis[2]
+    source[4] = coriolis[3]
 
     return nothing
 end
@@ -166,3 +195,71 @@ dg_fs = FluxSource(; law, grid, volume_form = vf, surface_numericalflux= sf)
 
 dg_sd.auxstate .= aux
 dg_fs.auxstate .= aux
+
+vcfl = 120.0
+hcfl = 0.2
+Δx = min_node_distance(grid, dims = 1)
+Δy = min_node_distance(grid, dims = 2)
+Δz = min_node_distance(grid, dims = 3)
+vdt = vcfl * Δz / c_max 
+hdt = hcfl * Δx / c_max
+dt = min(vdt, hdt)
+println(" the dt is ", dt)
+println(" the vertical cfl is ", dt * c_max / Δz)
+println(" the horizontal cfl is ", dt * c_max / Δx)
+timeend = 60 * 60 * 24 * 8 # 24 * 15 # seconds
+
+
+odesolver = ARK23(dg_fs, dg_sd, fieldarray(state), dt; split_rhs = false, paperversion = false)
+
+# odesolver = LSRK144(dg_fs, state, dt)
+
+
+do_output = function (step, time, q)
+    if step % ceil(Int, timeend / 100 / dt) == 0
+        println("simulation is ", time / timeend * 100, " percent complete")
+        ρ, ρu, ρv, ρw, _ = components(q)
+        println("maximum x-velocity ", maximum(ρu ./ ρ))
+        println("maximum y-velocity ", maximum(ρv ./ ρ))
+        println("maximum z-velocity ", maximum(ρw ./ ρ))
+        println("the time is ", time)
+    end
+end
+
+
+tic = time()
+solve!(state, timeend, odesolver; after_step=do_output)
+toc = time()
+println("The time for the simulation is ", toc - tic)
+
+ρ, ρu, ρv, ρw, _ = components(state)
+println("maximum x-velocity ", maximum(ρu ./ ρ))
+println("maximum y-velocity ", maximum(ρv ./ ρ))
+println("maximum z-velocity ", maximum(ρw ./ ρ))
+
+##
+
+test_state .= state
+tic = time()
+partitions = 1:36*8
+for i in partitions
+    aux = sphere_auxiliary.(Ref(law), x⃗, test_state)
+    dg_fs.auxstate .= aux
+    dg_sd.auxstate .= aux
+    dt = 240.0
+    odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
+    timeend = 60 * 60 * 24 * 8/ partitions[end]
+    # solve!(test_state, timeend, odesolver; after_step=do_output)
+    solve!(test_state, timeend, odesolver)
+    println("--------")
+    println("done with ", timeend)
+    println("partition ", i)
+    ρ, ρu, ρv, ρw, _ = components(test_state)
+    println("maximum x-velocity ", maximum(ρu ./ ρ))
+    println("maximum y-velocity ", maximum(ρv ./ ρ))
+    println("maximum z-velocity ", maximum(ρw ./ ρ))
+    println("-----")
+end
+toc = time()
+println("The time for the simulation is ", toc - tic)
+
