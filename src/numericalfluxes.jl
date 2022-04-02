@@ -7,18 +7,18 @@ export MatrixFlux
 
 avg(s⁻, s⁺) = (s⁻ + s⁺) / 2
 function logavg(a, b)
-    ζ = a / b
-    f = (ζ - 1) / (ζ + 1)
-    u = f^2
-    ϵ = eps(eltype(u))
+  ζ = a / b
+  f = (ζ - 1) / (ζ + 1)
+  u = f^2
+  ϵ = eps(eltype(u))
 
-    if u < ϵ
-        F = @evalpoly(u, one(u), one(u) / 3, one(u) / 5, one(u) / 7, one(u) / 9)
-    else
-        F = log(ζ) / 2f
-    end
+  if u < ϵ
+    F = @evalpoly(u, one(u), one(u) / 3, one(u) / 5, one(u) / 7, one(u) / 9)
+  else
+    F = log(ζ) / 2f
+  end
 
-    (a + b) / 2F
+  (a + b) / 2F
 end
 roe_avg(ρ⁻, ρ⁺, s⁻, s⁺) = (sqrt(ρ⁻) * s⁻ + sqrt(ρ⁺) * s⁺) / (sqrt(ρ⁻) + sqrt(ρ⁺))
 
@@ -44,7 +44,16 @@ end
 struct EntropyConservativeFlux <: AbstractNumericalFlux end
 struct KennedyGruberFlux <: AbstractNumericalFlux end
 struct LinearizedKennedyGruberFlux <: AbstractNumericalFlux end
-struct RefanovFlux <: AbstractNumericalFlux end
-struct LinearizedRefanovFlux <: AbstractNumericalFlux end
+struct RefanovFlux{S} <: AbstractNumericalFlux
+  scale::S
+end
+
+RefanovFlux() = RefanovFlux(1.0)
+struct LinearizedRefanovFlux{S} <: AbstractNumericalFlux
+  scale::S
+end
+
+LinearizedRefanovFlux() = LinearizedRefanovFlux(1.0)
+
 struct RoeFlux <: AbstractNumericalFlux end
 struct MatrixFlux <: AbstractNumericalFlux end

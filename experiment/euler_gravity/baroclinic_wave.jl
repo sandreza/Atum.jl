@@ -11,31 +11,30 @@ using CUDA
 using LinearAlgebra
 
 import Atum: boundarystate, source!
-import Atum.EulerTotalEnergy: auxiliary
 
 include("sphere_utils.jl")
 
 bw_p = (
-    a = 6378e3,
-    Ω = 2π/86400,
-    g = 9.81,
-    R_d = 287,
-    γ = 1.4,
-    pₛ = 1e5,
-    cv_d = 1e3/1.4,
-    cp_d = 1e3,
-    κ = 287/(1e3),
-    T_0 = 0.0, 
-    H = 30e3,
-    k = 3.0,
-    Γ = 0.005,
-    T_E = 310.0,
-    T_P = 240.0,
-    b = 2.0,
-    z_t = 15e3,
-    λ_c = π / 9,
-    ϕ_c = 2 * π / 9,
-    V_p = 1.0,
+    a=6378e3,
+    Ω=2π / 86400,
+    g=9.81,
+    R_d=287,
+    γ=1.4,
+    pₛ=1e5,
+    cv_d=1e3 / 1.4,
+    cp_d=1e3,
+    κ=287 / (1e3),
+    T_0=0.0,
+    H=30e3,
+    k=3.0,
+    Γ=0.005,
+    T_E=310.0,
+    T_P=240.0,
+    b=2.0,
+    z_t=15e3,
+    λ_c=π / 9,
+    ϕ_c=2 * π / 9,
+    V_p=1.0,
 )
 
 # Initial Conditions for Baroclinic Wave 
@@ -98,8 +97,8 @@ e_pot(bw_p, λ, ϕ, r) = bw_p.g * r
 # Cartesian Representation (boiler plate really)
 ρ₀ᶜᵃʳᵗ(bw_p, x...) = ρ₀(bw_p, lon(x...), lat(x...), rad(x...))
 ρu₀ᶜᵃʳᵗ(bw_p, x...) = (ρuʳᵃᵈ(bw_p, lon(x...), lat(x...), rad(x...)) * r̂(x...)
-                    + ρuˡᵃᵗ(bw_p, lon(x...), lat(x...), rad(x...)) * ϕ̂(x...)
-                    + ρuˡᵒⁿ(bw_p, lon(x...), lat(x...), rad(x...)) * λ̂(x...))
+                       + ρuˡᵃᵗ(bw_p, lon(x...), lat(x...), rad(x...)) * ϕ̂(x...)
+                       + ρuˡᵒⁿ(bw_p, lon(x...), lat(x...), rad(x...)) * λ̂(x...))
 ρe₀ᶜᵃʳᵗ(bw_p, x...) = ρe(bw_p, lon(x...), lat(x...), rad(x...))
 
 
@@ -114,6 +113,7 @@ end
 
 N = 3
 Nq = N + 1
+Nq⃗ = (Nq, Nq, Nq)
 dim = 3
 
 FT = Float64
@@ -122,10 +122,10 @@ A = CuArray
 Kv = 8
 Kh = 12
 
-law = EulerTotalEnergyLaw{FT, dim}()
-cell = LobattoCell{FT, A}(Nq, Nq, Nq)
-cpu_cell = LobattoCell{FT, Array}(Nq, Nq, Nq)
-vert_coord = range(FT(bw_p.a), stop=FT(bw_p.a + bw_p.H), length=Kv+1)
+law = EulerTotalEnergyLaw{FT,dim}()
+cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
+cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
+vert_coord = range(FT(bw_p.a), stop=FT(bw_p.a + bw_p.H), length=Kv + 1)
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
 
@@ -145,6 +145,7 @@ end
 
 state = fieldarray(undef, law, grid)
 test_state = fieldarray(undef, law, grid)
+stable_state = fieldarray(undef, law, grid)
 old_state = fieldarray(undef, law, grid)
 cpu_state = fieldarray(undef, law, cpu_grid)
 cpu_state .= baroclinic_wave.(cpu_x⃗, Ref(bw_p))
@@ -160,7 +161,7 @@ aux = sphere_auxiliary.(Ref(law), x⃗, state)
 old_aux = sphere_auxiliary.(Ref(law), x⃗, state)
 bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), state, aux)
 bw_density = components(state)[1]
-bw_soundspeed =  Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
+bw_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
 c_max = maximum(bw_soundspeed)
 
 function boundarystate(law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, _)
@@ -187,32 +188,31 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 end
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf = (RoeFlux(), RoeFlux(), RoeFlux())
+sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(0.1))  # KennedyGruberFlux()) 
 
 linearized_vf = Atum.LinearizedKennedyGruberFlux()
-linearized_sf = Atum.LinearizedRefanovFlux()
+linearized_sf = Atum.LinearizedRefanovFlux(0.1)# Atum.LinearizedKennedyGruberFlux() 
 
-dg_sd = SingleDirection(; law, grid, volume_form = linearized_vf, surface_numericalflux = linearized_sf)
-dg_fs = FluxSource(; law, grid, volume_form = vf, surface_numericalflux= sf)
+dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
+dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 dg_sd.auxstate .= aux
 dg_fs.auxstate .= aux
 
 vcfl = 120.0
-hcfl = 0.2
-Δx = min_node_distance(grid, dims = 1)
-Δy = min_node_distance(grid, dims = 2)
-Δz = min_node_distance(grid, dims = 3)
-vdt = vcfl * Δz / c_max 
+hcfl = 0.25
+Δx = min_node_distance(grid, dims=1)
+Δy = min_node_distance(grid, dims=2)
+Δz = min_node_distance(grid, dims=3)
+vdt = vcfl * Δz / c_max
 hdt = hcfl * Δx / c_max
 dt = min(vdt, hdt)
 println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
-timeend = 60 * 60 * 24 * 8 # 24 * 15 # seconds
+timeend = 60 * 60 * 24 * 10 # 24 * 15 # seconds
 
-
-odesolver = ARK23(dg_fs, dg_sd, fieldarray(state), dt; split_rhs = false, paperversion = false)
+odesolver = ARK23(dg_fs, dg_sd, fieldarray(state), dt; split_rhs=false, paperversion=false)
 
 # odesolver = LSRK144(dg_fs, state, dt)
 
@@ -240,34 +240,49 @@ println("maximum y-velocity ", maximum(ρv ./ ρ))
 println("maximum z-velocity ", maximum(ρw ./ ρ))
 
 ##
+# 30 minute updates and hcfl of 0.25 is stable
 vcfl = 120.0
 hcfl = 0.5
-Δx = min_node_distance(grid, dims = 1)
-Δy = min_node_distance(grid, dims = 2)
-Δz = min_node_distance(grid, dims = 3)
-vdt = vcfl * Δz / c_max 
-hdt = hcfl * Δx / c_max
+Δx = min_node_distance(grid, dims=1)
+Δy = min_node_distance(grid, dims=2)
+Δz = min_node_distance(grid, dims=3)
+vdt = vcfl * Δz / 350
+hdt = hcfl * Δx / 350
 dt = min(vdt, hdt)
 
 test_state .= old_state
+# test_state .= state
+endday = 10
+##
 tic = time()
-partitions = 1:24*10
+partitions = 1:24*endday*2
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), x⃗, test_state)
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
-    timeend = 60 * 60 * 24 * 10/ partitions[end]
+    timeend = 60 * 60 * 24 * endday / partitions[end]
     # solve!(test_state, timeend, odesolver; after_step=do_output)
     solve!(test_state, timeend, odesolver)
-    if i%4==0
+    if i % 4 == 0
         println("--------")
         println("done with ", timeend)
-        println("partition ", i)
-        ρ, ρu, ρv, ρw, _ = components(test_state)
+        println("partition ", i, " out of ", partitions[end])
+        ρ, ρu, ρv, ρw, ρet = components(test_state)
         println("maximum x-velocity ", maximum(ρu ./ ρ))
         println("maximum y-velocity ", maximum(ρv ./ ρ))
         println("maximum z-velocity ", maximum(ρw ./ ρ))
+        bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
+        bw_density = components(test_state)[1]
+        bw_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
+        c_max = maximum(bw_soundspeed)
+        println("The maximum soundspeed is ", c_max)
+        println("The dt is now ", dt)
+        if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
+            nothing
+        else
+            # stable_state .= test_state
+        end
         println("-----")
     end
 end
