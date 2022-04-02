@@ -37,7 +37,7 @@ function Bennu.batchedbandedmatrix(
         dg(dq, q, time; increment=false)
         return Event(getdevice(dg))
     end
-    mat = Bennu.batchedbandedmatrix(matvec!, dg.grid, dq, q, element_bandwidth)
+    mat = Bennu.batchedbandedmatrix(matvec!, dg.grid, dq, q, element_bandwidth, 256)  # block size 1024 is too much
 end
 
 function batchedbandedlu(
