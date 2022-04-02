@@ -200,7 +200,7 @@ dg_sd.auxstate .= aux
 dg_fs.auxstate .= aux
 
 vcfl = 120.0
-hcfl = 0.25
+hcfl = 0.1
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)

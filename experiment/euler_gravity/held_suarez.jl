@@ -247,7 +247,7 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = 120.0
-hcfl = 0.25
+hcfl = 0.4
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -260,7 +260,7 @@ println(" the horizontal cfl is ", dt * c_max / Δx)
 
 test_state .= old_state
 # test_state .= state
-endday = 30.0
+endday = 30.0 * 40
 ##
 tic = time()
 partitions = 1:24*endday*2
@@ -273,7 +273,7 @@ for i in partitions
     timeend = 60 * 60 * 24 * endday / partitions[end]
     # solve!(test_state, timeend, odesolver; after_step=do_output)
     solve!(test_state, timeend, odesolver)
-    if i % 4 == 0
+    if i % 10 == 0
         println("--------")
         println("done with ", timeend)
         println("partition ", i, " out of ", partitions[end])
@@ -288,7 +288,7 @@ for i in partitions
         println("The maximum soundspeed is ", c_max)
         println("The dt is now ", dt)
         global current_time += timeend
-        println("The current time is ", current_time)
+        println("The current day is ", current_time / 86400)
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
             nothing
         else
