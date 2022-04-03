@@ -123,8 +123,9 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 12 # 2 * 5
-Kh = 12 # 2 * 5
+Kv = 8 
+Kh = 8 
+# N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
@@ -279,21 +280,28 @@ for i in partitions
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
-    timeend = 60 * 60 * 24 * endday / partitions[end]
-    solve!(test_state, timeend, odesolver)
+    end_time = 60 * 60 * 24 * endday / partitions[end]
+    solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
+    timeend = odesolver.time
     if i % display_skip == 0
         println("--------")
         println("done with ", display_skip * timeend / 60, " minutes")
         println("partition ", i, " out of ", partitions[end])
         ρ, ρu, ρv, ρw, ρet = components(test_state)
-        println("maximum x-velocity ", maximum(ρu ./ ρ))
-        println("maximum y-velocity ", maximum(ρv ./ ρ))
-        println("maximum z-velocity ", maximum(ρw ./ ρ))
+        u = ρu ./ ρ
+        v = ρv ./ ρ
+        w = ρw ./ ρ
+        println("maximum x-velocity ", maximum(u))
+        println("maximum y-velocity ", maximum(v))
+        println("maximum z-velocity ", maximum(w))
         bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
         bw_density = components(test_state)[1]
         bw_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
+        speed = @. sqrt(u^2 + v^2 + w^2)
         c_max = maximum(bw_soundspeed)
+        mach_number = maximum(speed ./ bw_soundspeed)
         println("The maximum soundspeed is ", c_max)
+        println("The largest mach number is ", mach_number)
         println("The dt is now ", dt)
         global current_time += display_skip * timeend
         println("The current day is ", current_time / 86400)
@@ -320,3 +328,18 @@ tmp_ρ = components(test_state)[1]
 ρ̅_end = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
 println("The conservation of mass error is ", (ρ̅_start - ρ̅_end) / ρ̅_end)
+
+
+gpu_components = components(test_state)
+for i in eachindex(gpu_components)
+    cpu_components[i] .= Array(gpu_components[i])
+end
+statenames = ("ρ", "ρu", "ρv", "ρw", "ρe")
+
+filepath = "HeldSuarezCheck_" * "Nev" * string(Kv) * "_Neh" * string(Kv) * "_Nq" * string(Nq⃗[1]) * ".jld2"
+file = jldopen(filepath, "a+")
+JLD2.Group(file, "state")
+for (i,statename) in enumerate(statenames)
+    file["state"][statename] = cpu_components[i]
+end
+close(file)
