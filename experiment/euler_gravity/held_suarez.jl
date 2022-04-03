@@ -225,8 +225,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     source_ρu = -k_v * P * ρu
     source_ρe = -k_T * ρ * cv_d * (T - T_equil)
-    # source_ρu = 0 * ρu
-    source_ρe = 0 * ρe
+    source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -247,7 +246,7 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = 120.0
-hcfl = 0.3
+hcfl = 0.5
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -259,15 +258,18 @@ println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
 
 test_state .= old_state
+stable_state .= old_state
 # test_state .= state
 endday = 30.0 * 40
 tmp_ρ = components(test_state)[1]
 ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 ##
-display_skip = 100
+display_skip = 20
 tic = time()
 partitions = 1:24*endday*2
 current_time = 0.0
+save_partition = 1
+save_time = 0.0
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), x⃗, test_state)
     dg_fs.auxstate .= aux
@@ -294,10 +296,16 @@ for i in partitions
         ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
         println("The average density of the system is ", ρ̅)
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
-            nothing
+            println("The simulation NaNed, decreasing timestep and using stable state")
+            local i = save_partition
+            global current_time = save_time
+            test_state .= stable_state
+            global dt *= 0.9
         else
             println("creating backup state")
             stable_state .= test_state
+            global save_partition = i
+            global save_time = current_time
         end
         println("-----")
     end
