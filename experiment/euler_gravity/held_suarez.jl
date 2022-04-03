@@ -37,6 +37,10 @@ bw_p = (
     V_p=1.0,
 )
 
+# for full sphere: 
+# gravc = 6.67408e-11, mearth = 5.9722e24, grav = gravc * mearth / rearth^2
+# geopotential = gravc * mearth / rearth
+
 # Initial Conditions for Baroclinic Wave 
 T₀(bw_p) = 0.5 * (bw_p.T_E + bw_p.T_P)
 bw_A(bw_p) = 1.0 / bw_p.Γ
@@ -111,7 +115,7 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, x⃗, state)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], state[ix_ρu⃗]..., state[ix_ρe], 9.81 * r)
 end
 
-N = 3
+N = 4
 Nq = N + 1
 Nq⃗ = (Nq, Nq, Nq)
 dim = 3
@@ -119,8 +123,8 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 2 * 5
-Kh = 2 * 5
+Kv = 12 # 2 * 5
+Kh = 12 # 2 * 5
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
@@ -225,7 +229,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     source_ρu = -k_v * P * ρu
     source_ρe = -k_T * ρ * cv_d * (T - T_equil)
-    source_ρe += (ρu' * source_ρu) / ρ
+    # source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -264,9 +268,9 @@ endday = 30.0 * 40
 tmp_ρ = components(test_state)[1]
 ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 ##
-display_skip = 20
+display_skip = 50
 tic = time()
-partitions = 1:24*endday*2
+partitions = 1:24*endday*3
 current_time = 0.0
 save_partition = 1
 save_time = 0.0
@@ -279,7 +283,7 @@ for i in partitions
     solve!(test_state, timeend, odesolver)
     if i % display_skip == 0
         println("--------")
-        println("done with ", display_skip*timeend/60, " minutes")
+        println("done with ", display_skip * timeend / 60, " minutes")
         println("partition ", i, " out of ", partitions[end])
         ρ, ρu, ρv, ρw, ρet = components(test_state)
         println("maximum x-velocity ", maximum(ρu ./ ρ))
@@ -315,4 +319,4 @@ println("The time for the simulation is ", toc - tic)
 tmp_ρ = components(test_state)[1]
 ρ̅_end = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
-println("The conservation of mass error is ", (ρ̅_start-ρ̅_end)/ρ̅_end)
+println("The conservation of mass error is ", (ρ̅_start - ρ̅_end) / ρ̅_end)
