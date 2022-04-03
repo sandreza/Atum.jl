@@ -9,7 +9,7 @@ export ARK23
 function solve!(q, timeend, solver;
   after_step::Function=(x...) -> nothing,
   after_stage::Function=(x...) -> nothing,
-  adjust_final=true)
+  adjust_final=false)
   finalstep = false
   step = 0
   while true
