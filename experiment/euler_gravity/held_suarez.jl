@@ -238,16 +238,16 @@ end
 
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux())
+sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(0.1))
 
 linearized_vf = Atum.LinearizedKennedyGruberFlux()
-linearized_sf = Atum.LinearizedRefanovFlux()
+linearized_sf = Atum.LinearizedRefanovFlux(0.1)
 
 dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = 120.0
-hcfl = 0.4
+hcfl = 0.3
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -261,7 +261,10 @@ println(" the horizontal cfl is ", dt * c_max / Δx)
 test_state .= old_state
 # test_state .= state
 endday = 30.0 * 40
+tmp_ρ = components(test_state)[1]
+ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 ##
+display_skip = 100
 tic = time()
 partitions = 1:24*endday*2
 current_time = 0.0
@@ -271,11 +274,10 @@ for i in partitions
     dg_sd.auxstate .= aux
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
     timeend = 60 * 60 * 24 * endday / partitions[end]
-    # solve!(test_state, timeend, odesolver; after_step=do_output)
     solve!(test_state, timeend, odesolver)
-    if i % 10 == 0
+    if i % display_skip == 0
         println("--------")
-        println("done with ", timeend)
+        println("done with ", display_skip*timeend/60, " minutes")
         println("partition ", i, " out of ", partitions[end])
         ρ, ρu, ρv, ρw, ρet = components(test_state)
         println("maximum x-velocity ", maximum(ρu ./ ρ))
@@ -287,15 +289,22 @@ for i in partitions
         c_max = maximum(bw_soundspeed)
         println("The maximum soundspeed is ", c_max)
         println("The dt is now ", dt)
-        global current_time += timeend
+        global current_time += display_skip * timeend
         println("The current day is ", current_time / 86400)
+        ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+        println("The average density of the system is ", ρ̅)
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
             nothing
         else
-            # stable_state .= test_state
+            println("creating backup state")
+            stable_state .= test_state
         end
         println("-----")
     end
 end
 toc = time()
 println("The time for the simulation is ", toc - tic)
+tmp_ρ = components(test_state)[1]
+ρ̅_end = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+
+println("The conservation of mass error is ", (ρ̅_start-ρ̅_end)/ρ̅_end)
