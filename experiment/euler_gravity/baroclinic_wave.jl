@@ -263,7 +263,7 @@ for i in partitions
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
     timeend = 60 * 60 * 24 * endday / partitions[end]
     # solve!(test_state, timeend, odesolver; after_step=do_output)
-    solve!(test_state, timeend, odesolver)
+    solve!(test_state, timeend, odesolver, adjust_final=false)
     if i % 4 == 0
         println("--------")
         println("done with ", timeend)
@@ -278,6 +278,8 @@ for i in partitions
         c_max = maximum(bw_soundspeed)
         println("The maximum soundspeed is ", c_max)
         println("The dt is now ", dt)
+        ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+        println("The average density of the system is ", ρ̅)
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
             nothing
         else
