@@ -9,6 +9,7 @@ using BenchmarkTools
 using Revise
 using CUDA
 using LinearAlgebra
+using JLD2
 
 import Atum: boundarystate, source!
 
@@ -115,7 +116,16 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, x⃗, state)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], state[ix_ρu⃗]..., state[ix_ρe], 9.81 * r)
 end
 
-N = 4
+function sphere_auxiliary_3(law::EulerTotalEnergyLaw, x⃗, state)
+    ix_ρ, ix_ρu⃗, ix_ρe = Atum.EulerTotalEnergy.varsindices(law)
+    ix_x, ix_y, ix_z, _, _, _, _ = Atum.EulerTotalEnergy.auxindices(law)
+    r = sqrt(x⃗' * x⃗)
+    r̂ = x⃗ ./ r
+    tmp = (I - r̂ * (r̂')) * state[ix_ρu⃗]
+    @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], tmp..., state[ix_ρe], 9.81 * r)
+end
+
+N = 3
 Nq = N + 1
 Nq⃗ = (Nq, Nq, Nq)
 dim = 3
@@ -123,8 +133,8 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 8 
-Kh = 8 
+Kv = 15 
+Kh = 15 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
@@ -148,6 +158,7 @@ function baroclinic_wave(x⃗, param)
     SVector(bw_ρ, bw_ρu⃗..., bw_ρe)
 end
 
+
 state = fieldarray(undef, law, grid)
 test_state = fieldarray(undef, law, grid)
 stable_state = fieldarray(undef, law, grid)
@@ -168,6 +179,7 @@ bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), state, aux)
 bw_density = components(state)[1]
 bw_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
 c_max = maximum(bw_soundspeed)
+
 
 function boundarystate(law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, _)
     ρ⁻, ρu⃗⁻, ρe⁻ = EulerTotalEnergy.unpackstate(law, q⁻)
@@ -242,10 +254,10 @@ end
 
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(0.1))
+sf = (RoeFlux(), RoeFlux(),  Atum.RefanovFlux(1.0))
 
 linearized_vf = Atum.LinearizedKennedyGruberFlux()
-linearized_sf = Atum.LinearizedRefanovFlux(0.1)
+linearized_sf = Atum.LinearizedRefanovFlux(1.0)
 
 dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
@@ -262,8 +274,11 @@ println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
 
+
 test_state .= old_state
 stable_state .= old_state
+
+
 # test_state .= state
 endday = 30.0 * 40
 tmp_ρ = components(test_state)[1]
@@ -272,9 +287,12 @@ tmp_ρ = components(test_state)[1]
 display_skip = 50
 tic = time()
 partitions = 1:24*endday*3
+
 current_time = 0.0
 save_partition = 1
 save_time = 0.0
+
+state .*= 0.0
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), x⃗, test_state)
     dg_fs.auxstate .= aux
@@ -287,7 +305,7 @@ for i in partitions
         println("--------")
         println("done with ", display_skip * timeend / 60, " minutes")
         println("partition ", i, " out of ", partitions[end])
-        ρ, ρu, ρv, ρw, ρet = components(test_state)
+        local ρ, ρu, ρv, ρw, ρet = components(test_state)
         u = ρu ./ ρ
         v = ρv ./ ρ
         w = ρw ./ ρ
@@ -307,6 +325,9 @@ for i in partitions
         println("The current day is ", current_time / 86400)
         ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
         println("The average density of the system is ", ρ̅)
+        toc = time()
+        println("The runtime for the simulation is ", (toc - tic)/60, " minutes")
+
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
             println("The simulation NaNed, decreasing timestep and using stable state")
             local i = save_partition
@@ -318,6 +339,9 @@ for i in partitions
             stable_state .= test_state
             global save_partition = i
             global save_time = current_time
+            if current_time/86400 > 200
+                state .+= stable_state
+            end
         end
         println("-----")
     end
@@ -329,7 +353,6 @@ tmp_ρ = components(test_state)[1]
 
 println("The conservation of mass error is ", (ρ̅_start - ρ̅_end) / ρ̅_end)
 
-
 gpu_components = components(test_state)
 for i in eachindex(gpu_components)
     cpu_components[i] .= Array(gpu_components[i])
@@ -339,7 +362,17 @@ statenames = ("ρ", "ρu", "ρv", "ρw", "ρe")
 filepath = "HeldSuarezCheck_" * "Nev" * string(Kv) * "_Neh" * string(Kv) * "_Nq" * string(Nq⃗[1]) * ".jld2"
 file = jldopen(filepath, "a+")
 JLD2.Group(file, "state")
+JLD2.Group(file, "averagedstate")
 for (i,statename) in enumerate(statenames)
     file["state"][statename] = cpu_components[i]
+end
+
+gpu_components = components(state)
+for i in eachindex(gpu_components)
+    cpu_components[i] .= Array(gpu_components[i])
+end
+
+for (i, statename) in enumerate(statenames)
+    file["averagedstate"][statename] = cpu_components[i]
 end
 close(file)
