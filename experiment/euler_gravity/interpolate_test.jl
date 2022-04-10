@@ -20,7 +20,7 @@ interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq⃗, arch=CUDADevice())
 norm(newf[:] - x[1, :])
 
 ##
-nx = ny = nz = 8
+nx = ny = nz = 64
 newx = range(-1.5e3, 1.5e3, length=nx)
 newy = range(-1.5e3, 1.5e3, length=ny)
 newz = range(0, 3e3, length=nz)
@@ -29,7 +29,8 @@ newgrid = CuArray([@SVector[newx[i], newy[j], newz[k]] for i in 1:nx, j in 1:ny,
 oldgrid = grid
 ξlist, elist = cube_interpolate(newgrid, oldgrid)
 
-newf = CuArray(zeros(nx,ny,nz))
+newf = CuArray(zeros(nx, ny, nz))
 oldf = z
+Nq⃗ = (Nq, Nq, Nq )
 interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq⃗, arch=CUDADevice())
 
