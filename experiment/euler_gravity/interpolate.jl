@@ -1,4 +1,4 @@
-using KernelAbstractions, CUDAKernels
+using KernelAbstractions, CUDAKernels, StaticArrays
 
 """
     baryweights(r)
@@ -45,138 +45,7 @@ function lagrange_pole(ξ, r, ω, i, ξcheck)
     end
 end
 
-function lagrange_eval(f, newx, newy, newz, rx, ry, rz, ωx, ωy, ωz)
-    icheck = checkgl(newx, rx)
-    jcheck = checkgl(newy, ry)
-    kcheck = checkgl(newz, rz)
-    numerator = zeros(1)
-    denominator = zeros(1)
-    for k in eachindex(rz)
-        polez, kk, k = lagrange_pole(newz, rz, ωz, k, kcheck)
-        for j in eachindex(ry)
-            poley, jj, j = lagrange_pole(newy, ry, ωy, j, jcheck)
-            for i in eachindex(rx)
-                polex, ii, i = lagrange_pole(newx, rx, ωx, i, icheck)
-                numerator[1] += f[ii, jj, kk] * polex * poley * polez
-                denominator[1] += polex * poley * polez
-            end
-        end
-    end
-    return numerator[1] / denominator[1]
-end
-
-function lagrange_eval_2(f, ξ, r, ω)
-    newx, newy, newz = ξ
-    rx, ry, rz = r
-    ωx, ωy, ωz = ω
-    icheck = checkgl(newx, rx)
-    jcheck = checkgl(newy, ry)
-    kcheck = checkgl(newz, rz)
-    numerator = zeros(1)
-    denominator = zeros(1)
-    for k in eachindex(rz)
-        polez, kk, k = lagrange_pole(newz, rz, ωz, k, kcheck)
-        for j in eachindex(ry)
-            poley, jj, j = lagrange_pole(newy, ry, ωy, j, jcheck)
-            for i in eachindex(rx)
-                polex, ii, i = lagrange_pole(newx, rx, ωx, i, icheck)
-                numerator[1] += f[ii, jj, kk] * polex * poley * polez
-                denominator[1] += polex * poley * polez
-            end
-        end
-    end
-    return numerator[1] / denominator[1]
-end
-
-function lagrange_eval_3(f, ξ, r, ω, Nq)
-    newx, newy, newz = ξ
-    rx, ry, rz = r
-    ωx, ωy, ωz = ω
-    icheck = checkgl(newx, rx)
-    jcheck = checkgl(newy, ry)
-    kcheck = checkgl(newz, rz)
-    numerator = 0.0
-    denominator = 0.0
-    for k in eachindex(rz)
-        polez, kk, k = lagrange_pole(newz, rz, ωz, k, kcheck)
-        for j in eachindex(ry)
-            poley, jj, j = lagrange_pole(newy, ry, ωy, j, jcheck)
-            for i in eachindex(rx)
-                polex, ii, i = lagrange_pole(newx, rx, ωx, i, icheck)
-                I = ii + Nq[1] * (jj - 1 + Nq[2] * (kk - 1))
-                poles = polex * poley * polez
-                @inbounds numerator[1] += f[I] * poles
-                denominator[1] += poles
-            end
-        end
-    end
-    return numerator[1] / denominator[1]
-end
-
-function lagrange_eval_nb(f, ξ, r, ω)
-    icheck = checkgl(newx, rx)
-    jcheck = checkgl(newy, ry)
-    kcheck = checkgl(newz, rz)
-    numerator = zeros(1)
-    denominator = zeros(1)
-    for k in eachindex(rz)
-        if kcheck == 0
-            Δz = (newz .- rz[k])
-            polez = ωz[k] ./ Δz
-            kk = k
-        else
-            polez = 1.0
-            k = eachindex(rz)[end]
-            kk = kcheck
-        end
-        for j in eachindex(ry)
-            if jcheck == 0
-                Δy = (newy .- ry[j])
-                poley = ωy[j] ./ Δy
-                jj = j
-            else
-                poley = 1.0
-                j = eachindex(ry)[end]
-                jj = jcheck
-            end
-            for i in eachindex(rx)
-                if icheck == 0
-                    Δx = (newx .- rx[i])
-                    polex = ωx[i] ./ Δx
-                    ii = i
-                else
-                    polex = 1.0
-                    i = eachindex(rx)[end]
-                    ii = icheck
-                end
-                numerator[1] += f[ii, jj, kk] * polex * poley * polez
-                denominator[1] += polex * poley * polez
-            end
-        end
-    end
-    return numerator[1] / denominator[1]
-end
-
-@kernel function first_pass!(newf, oldf, elist, ξlist, r, ω, ::Val{Nq}) where {Nq}
-    I = @index(Global, Linear)
-    oldfijk = @private Nq
-    ξ = ξlist[I]
-    e = elist[I]
-    for II in eachindex(oldfijk)
-        oldfijk[II] = oldf[II, e]
-    end
-    newf[I] = lagrange_eval_2(oldfijk, ξ, r, ω)
-end
-
-@kernel function second_pass!(newf, oldf, elist, ξlist, r, ω, ::Val{Nq}) where {Nq}
-    I = @index(Global, Linear)
-    ξ = ξlist[I]
-    e = elist[I]
-    oldfijk = view(oldf, :, e)
-    newf[I] = lagrange_eval_3(oldfijk, ξ, r, ω, Nq)
-end
-
-@kernel function a7_pass!(newf, oldf, elist, ξlist, r, ω, ::Val{Nq}) where {Nq}
+@kernel function interpolate_field_kernel!(newf, oldf, elist, ξlist, r, ω, ::Val{Nq}) where {Nq}
     I = @index(Global, Linear)
     ξ = ξlist[I]
     e = elist[I]
@@ -206,7 +75,7 @@ end
 end
 
 function interpolate_field!(newf, oldf, elist, ξlist, r, ω, Nq; arch=CUDADevice(), blocksize=256)
-    kernel = a7_pass!(arch, blocksize)
+    kernel = interpolate_field_kernel!(arch, blocksize)
     event = kernel(newf, oldf, elist, ξlist, r, ω, Val(Nq), ndrange=size(newf))
     wait(event)
     return nothing
@@ -270,3 +139,13 @@ function cube_interpolate(newgrid, oldgrid; arch=CUDADevice())
 
     return ξlist, elist
 end
+
+function cube_single_element_index(cell_coords, Kv, Kh)
+    ev = cell_coords[1] # vertical element
+    ehi = cell_coords[2] # local face i index
+    ehj = cell_coords[3] # local face j index
+    ehf = cell_coords[4] # local face index
+    return ev + Kv * (ehi - 1 + Kh * (ehj - 1 + Kh * (ehf - 1)))
+end
+
+sphericaltocartesian(θ, ϕ, r) = SVector(r * cos(θ) * sin(ϕ), r * sin(θ) * sin(ϕ), r * cos(ϕ))

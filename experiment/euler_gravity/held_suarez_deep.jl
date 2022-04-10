@@ -83,15 +83,16 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 20 # 12 
-Kh = 5 # 12 
+Kv = 5 # 12 
+Kh = 10 # 12 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
-vert_coord = FT(hs_p.a) .+ [0, 1e3, 3e3, 9e3, 1.8e4, 3e4]# [0, 200.0, 500.0, 1e3, 3e3, 9e3, 1.8e4, 3e4]
+vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.8e4, 3e4]# [0, 200.0, 500.0, 1e3, 3e3, 9e3, 1.8e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 1.5e3, 4e3, 1e4, 1.8e4, 3e4]
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
 
@@ -328,7 +329,7 @@ println("The time for the simulation is ", toc - tic)
 tmp_ρ = components(test_state)[1]
 ρ̅_end = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
-state .*= 1/averaging_counter
+state .*= 1 / averaging_counter
 
 println("The conservation of mass error is ", (ρ̅_start - ρ̅_end) / ρ̅_end)
 
@@ -338,10 +339,11 @@ for i in eachindex(gpu_components)
 end
 statenames = ("ρ", "ρu", "ρv", "ρw", "ρe")
 
-filepath = "HeldSuarezDeep_" * "Nev" * string(Kv) * "_Neh" * string(Kh) * "_Nq" * string(Nq⃗[1]) * ".jld2"
+filepath = "HeldSuarezDeepStretched_" * "Nev" * string(Kv) * "_Neh" * string(Kh) * "_Nq" * string(Nq⃗[1]) * ".jld2"
 file = jldopen(filepath, "a+")
 JLD2.Group(file, "state")
 JLD2.Group(file, "averagedstate")
+JLD2.Group(file, "grid")
 for (i, statename) in enumerate(statenames)
     file["state"][statename] = cpu_components[i]
 end
@@ -354,4 +356,10 @@ end
 for (i, statename) in enumerate(statenames)
     file["averagedstate"][statename] = cpu_components[i]
 end
+
+file["grid"]["vertical_coordinate"] = vert_coord
+file["grid"]["gauss_lobatto_points"] = Nq⃗
+file["grid"]["vertical_element_number"] = Kv
+file["grid"]["horizontal_element_number"] = Kh
+
 close(file)
