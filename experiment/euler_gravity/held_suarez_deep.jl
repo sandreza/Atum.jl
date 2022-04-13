@@ -13,7 +13,10 @@ using JLD2
 
 import Atum: boundarystate, source!
 
+statistic_save = true
+
 include("sphere_utils.jl")
+include("sphere_statistics_functions.jl")
 
 hs_p = (
     a=6378e3,
@@ -83,16 +86,20 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 5 # 12 
-Kh = 10 # 12 
+Kv = 7 # 12 
+Kh = 8 # 12 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
-vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.8e4, 3e4]# [0, 200.0, 500.0, 1e3, 3e3, 9e3, 1.8e4, 3e4]
-# vert_coord = FT(hs_p.a) .+ [0, 1.5e3, 4e3, 1e4, 1.8e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.8e4, 3e4]# [0, 200.0, 500.0, 1e3, 3e3, 9e3, 1.8e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 9e3, 1.4e4, 2e4, 2.5e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 2.5e4, 3e4]
+vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 100, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 3e4]
+
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
 
@@ -189,10 +196,10 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     # horizontal projection option
     k = coord / norm(coord)
-    # P = I - k * k' # technically should project out pressure normal
-    # source_ρu = -k_v * P * ρu
+    P = I - k * k' # technically should project out pressure normal
+    source_ρu = -k_v * P * ρu
 
-    source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
+    # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -k_T * ρ * cv_d * (T - T_equil)
     source_ρe += (ρu' * source_ρu) / ρ
 
@@ -215,7 +222,7 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = Inf
-hcfl = 0.5
+hcfl = 0.35 # for polynomial order 4 hcfl = 0.15, 3 hcfl = 0.25
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -241,35 +248,51 @@ zp = components(aux)[3]
 endday = 30.0 * 40
 tmp_ρ = components(test_state)[1]
 ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+
+
+fmvar = mean_variables.(Ref(law), state, aux)
+smvar = second_moment_variables.(fmvar)
+fmvartmp = mean_variables.(Ref(law), state, aux)
+
+fmvar .*= 0.0
+smvar .*= 0.0
+
 ##
 display_skip = 50
 tic = time()
-partitions = 1:endday*24*3 # 24*3  # 1:24*endday*3 for updating every 20 minutes
+partitions = 1:endday*72 # 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
 save_time = 0.0
 averaging_counter = 0.0
+statistic_counter = 0.0
 
-state .*= 0.0
+state .= test_state 
+
 for i in partitions
-    aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
+    aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
     end_time = 60 * 60 * 24 * endday / partitions[end]
+    state .= test_state
     solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
+    # midpoint type extrapolation
+    α = 1.5
+    state .= α * (test_state) + (1 - α) * state
+
     timeend = odesolver.time
-    #=
-    local ρ, ρu, ρv, ρw, ρet = components(test_state)
-    u = ρu ./ ρ
-    v = ρv ./ ρ
-    w = ρw ./ ρ
-    uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
-    minuʳ = minimum(uʳ)
-    maxuʳ = maximum(uʳ)
-    println("extrema vertical velocity ", (minuʳ, maxuʳ))
-    =#
+    global current_time += timeend
+
+    if statistic_save & (current_time / 86400 > 200) & (i % 15 == 0)
+        println("gathering statistics at time ", current_time / 86400)
+        global statistic_counter += 1.0
+        global fmvartmp .= mean_variables.(Ref(law), test_state, aux)
+        global smvar .+= second_moment_variables.(fmvartmp)
+        global fmvar .+= mean_variables.(Ref(law), test_state, aux)
+    end
+
     if i % display_skip == 0
         println("--------")
         println("done with ", display_skip * timeend / 60, " minutes")
@@ -293,8 +316,9 @@ for i in partitions
         mach_number = maximum(speed ./ hs_soundspeed)
         println("The maximum soundspeed is ", c_max)
         println("The largest mach number is ", mach_number)
+        println(" the vertical cfl is ", dt * c_max / Δz)
+        println(" the horizontal cfl is ", dt * c_max / Δx)
         println("The dt is now ", dt)
-        global current_time += display_skip * timeend
         println("The current day is ", current_time / 86400)
         ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
         println("The average density of the system is ", ρ̅)
@@ -314,11 +338,6 @@ for i in partitions
                 global save_partition = i
                 global save_time = current_time
             end
-            if current_time / 86400 > 200
-                println("averaging")
-                state .+= stable_state
-                global averaging_counter += 1.0
-            end
         end
         println("-----")
     end
@@ -328,6 +347,10 @@ toc = time()
 println("The time for the simulation is ", toc - tic)
 tmp_ρ = components(test_state)[1]
 ρ̅_end = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+
+# normalize statistics
+fmvar .*= 1 / statistic_counter
+smvar .*= 1 / statistic_counter
 
 state .*= 1 / averaging_counter
 
