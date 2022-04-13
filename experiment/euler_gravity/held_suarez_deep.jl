@@ -87,18 +87,16 @@ FT = Float64
 A = CuArray
 
 Kv = 7 # 12 
-Kh = 8 # 12 
+Kh = 15 # 12 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
-# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.8e4, 3e4]# [0, 200.0, 500.0, 1e3, 3e3, 9e3, 1.8e4, 3e4]
-# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 9e3, 1.4e4, 2e4, 2.5e4, 3e4]
-# vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 2.5e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.8e4, 3e4]
 vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 3e4]
-# vert_coord = FT(hs_p.a) .+ [0, 100, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.5e4, 2.25e4, 3e4]
 
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
@@ -260,7 +258,7 @@ smvar .*= 0.0
 ##
 display_skip = 50
 tic = time()
-partitions = 1:endday*72 # 24*3  # 1:24*endday*3 for updating every 20 minutes
+partitions = 1:endday*36*2 # 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
@@ -330,6 +328,7 @@ for i in partitions
             local i = save_partition
             global current_time = save_time
             test_state .= stable_state
+            state .= stable_state
             global dt *= 0.9
         else
             if (abs(minuʳ) + abs(maxuʳ)) < 2.0
