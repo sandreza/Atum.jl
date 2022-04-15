@@ -10,6 +10,7 @@ using Revise
 using CUDA
 using LinearAlgebra
 using JLD2
+using BenchmarkTools
 
 import Atum: boundarystate, source!
 
@@ -86,7 +87,7 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 7 # 12 
+Kv = 15 # 12 
 Kh = 15 # 12 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
@@ -94,9 +95,12 @@ law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
-# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.8e4, 3e4]
-vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2e4, 3e4]
-# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.5e4, 2.25e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.5e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2.25e4, 3e4]
+# plevels = range(1e5 * exp(-3e4 / 8e3), 1e5, length=Kv+1)
+# vert_coord = FT(hs_p.a) .+ reverse(@. -log(plevels / 1e5) * 8e3)
+# vert_coord = FT(hs_p.a) .+ [0, 1e3, 3e3, 6e3, 9e3, 1.2e4, 1.5e4, 1.8e4, 2.1e4, 2.4e4, 2.7e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, range(1e3, 2e4, length=Kv-4)[1:end-1]..., range(2e4, 3e4, length=5)...]
 
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
@@ -220,7 +224,7 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = Inf
-hcfl = 0.35 # for polynomial order 4 hcfl = 0.15, 3 hcfl = 0.25
+hcfl = 0.3 # hcfl = 0.2 for a long run
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -258,7 +262,7 @@ smvar .*= 0.0
 ##
 display_skip = 50
 tic = time()
-partitions = 1:endday*36*2 # 24*3  # 1:24*endday*3 for updating every 20 minutes
+partitions = 1:endday*36 # 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
@@ -266,7 +270,7 @@ save_time = 0.0
 averaging_counter = 0.0
 statistic_counter = 0.0
 
-state .= test_state 
+state .= test_state
 
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
@@ -276,19 +280,22 @@ for i in partitions
     end_time = 60 * 60 * 24 * endday / partitions[end]
     state .= test_state
     solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
-    # midpoint type extrapolation
+    # current reference state α = 1.0
+    # midpoint type extrapolation: α = 1.5
+    # backward euler type extrapolation: α = 2.0
     α = 1.5
     state .= α * (test_state) + (1 - α) * state
 
     timeend = odesolver.time
     global current_time += timeend
 
-    if statistic_save & (current_time / 86400 > 200) & (i % 15 == 0)
-        println("gathering statistics at time ", current_time / 86400)
+    if statistic_save & (current_time / 86400 > 200) & (i % 10 == 0)
+        println("gathering statistics at day ", current_time / 86400)
+        println("The counter is at ", statistic_counter)
         global statistic_counter += 1.0
         global fmvartmp .= mean_variables.(Ref(law), test_state, aux)
         global smvar .+= second_moment_variables.(fmvartmp)
-        global fmvar .+= mean_variables.(Ref(law), test_state, aux)
+        global fmvar .+= fmvartmp
     end
 
     if i % display_skip == 0
@@ -330,8 +337,14 @@ for i in partitions
             test_state .= stable_state
             state .= stable_state
             global dt *= 0.9
+
+            global statistic_counter = 1
+            aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
+            fmvar .= mean_variables.(Ref(law), test_state, aux)
+            smvar .= second_moment_variables.(fmvar)
+
         else
-            if (abs(minuʳ) + abs(maxuʳ)) < 2.0
+            if (abs(minuʳ) + abs(maxuʳ)) < 20.0
                 println("creating backup state")
                 stable_state .= test_state
                 global save_partition = i
@@ -349,7 +362,7 @@ tmp_ρ = components(test_state)[1]
 
 # normalize statistics
 fmvar .*= 1 / statistic_counter
-smvar .*= 1 / statistic_counter
+smvar .*= 1 / (statistic_counter-1)
 
 state .*= 1 / averaging_counter
 
