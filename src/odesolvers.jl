@@ -47,11 +47,14 @@ end
 
 function dostep!(q, lsrk::LSRK, after_stage)
   @unpack rhs!, dq, rka, rkb, rkc, dt, time = lsrk
+  # broadcast does not play nice with fieldarrays
+  caq = parent(components(q)[1])
+  cadq = parent(components(dq)[1])
   for stage = 1:length(rka)
     stagetime = time + rkc[stage] * dt
-    dq .*= rka[stage]
+    cadq .*= rka[stage]
     rhs!(dq, q, stagetime)
-    @. q += rkb[stage] * dt * dq
+    @. caq += rkb[stage] * dt * cadq
     after_stage(stagetime, q)
   end
   lsrk.time += dt
