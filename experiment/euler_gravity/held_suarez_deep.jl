@@ -79,7 +79,7 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, hs_p, x⃗, state)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], tmp..., state[ix_ρe], ϕ)
 end
 
-N = 3
+N = 4
 Nq = N + 1
 Nq⃗ = (Nq, Nq, Nq)
 dim = 3
@@ -87,8 +87,8 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 15 # 12 
-Kh = 15 # 12 
+Kv = 8 # 12 
+Kh = 9 # 12 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
@@ -101,6 +101,7 @@ vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
 # vert_coord = FT(hs_p.a) .+ reverse(@. -log(plevels / 1e5) * 8e3)
 # vert_coord = FT(hs_p.a) .+ [0, 1e3, 3e3, 6e3, 9e3, 1.2e4, 1.5e4, 1.8e4, 2.1e4, 2.4e4, 2.7e4, 3e4]
 # vert_coord = FT(hs_p.a) .+ [0, range(1e3, 2e4, length=Kv-4)[1:end-1]..., range(2e4, 3e4, length=5)...]
+# vert_coord =  FT(hs_p.a) .+ (-0.5 .* ( cos.(range(0, π, length = Kv + 1) ) ) .+ 0.5) * 3e4
 
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
@@ -144,7 +145,8 @@ c_max = maximum(hs_soundspeed)
 function boundarystate(law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, _)
     ρ⁻, ρu⃗⁻, ρe⁻ = EulerTotalEnergy.unpackstate(law, q⁻)
     ρ⁺, ρe⁺ = ρ⁻, ρe⁻
-    ρu⃗⁺ = ρu⃗⁻ - 2 * (n⃗' * ρu⃗⁻) * n⃗
+    ρu⃗⁺ = ρu⃗⁻ - 2 * (n⃗' * ρu⃗⁻) * n⃗ # free-slip
+    # ρu⃗⁺ = - ρu⃗⁻ # no-slip
     SVector(ρ⁺, ρu⃗⁺..., ρe⁺), aux⁻
 end
 
@@ -196,14 +198,18 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     k_T = k_a + (k_s - k_a) * height_factor * cos(φ) * cos(φ) * cos(φ) * cos(φ)
     k_v = k_f * height_factor
 
+    # sponge top 
+    # Htop = 6378e3 + 3e4
+    # top_sponge = k_f * exp(-(Htop - z)/2e3) * 3 # only tried with /1e3 
+
     # horizontal projection option
     k = coord / norm(coord)
     P = I - k * k' # technically should project out pressure normal
-    source_ρu = -k_v * P * ρu
+    source_ρu = -k_v * P * ρu # - top_sponge * ρu
 
     # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -k_T * ρ * cv_d * (T - T_equil)
-    source_ρe += (ρu' * source_ρu) / ρ
+    # source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -224,7 +230,7 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = Inf
-hcfl = 0.3 # hcfl = 0.2 for a long run
+hcfl = 0.5 # hcfl = 0.2 for a long run
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -236,6 +242,17 @@ println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
 println(" the minimum grid spacing in the horizontal is ", Δx)
 println(" the minimum grid spacing in the vertical is ", Δz)
+
+# project onto elementwise horizontal mean 
+P1 = CuArray(zeros(Nq⃗[1], Nq⃗[1]))
+P2 = CuArray(zeros(Nq⃗[2], Nq⃗[2]))
+P3 = CuArray(zeros(Nq⃗[3], Nq⃗[3]))
+tmp = cell.weights_1d[1][:, :, 1]'
+P1 .= tmp / 2
+P2 .= P1
+P3 .= P1 * 0 + I
+P = Bennu.Kron((P3, P2, P1)) # need to reverse the list
+
 
 
 test_state .= old_state
@@ -261,8 +278,8 @@ smvar .*= 0.0
 
 ##
 display_skip = 50
-tic = time()
-partitions = 1:endday*36 # 24*3  # 1:24*endday*3 for updating every 20 minutes
+tic = Base.time()
+partitions = 1:endday*18*4 # 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
@@ -274,6 +291,16 @@ state .= test_state
 
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+    # remove element lateral variation in slowest evolving variables
+
+    _, _, _, tmp1, tmp2, tmp3, tmp4, tmp5, _ = components(aux)
+    tmp1 .= (P * tmp1)
+    # tmp2 .= (P * tmp2)
+    # tmp3 .= (P * tmp3)
+    # tmp4 .= (P * tmp4)
+    tmp5 .= (P * tmp5)
+
+    # end
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
@@ -327,7 +354,7 @@ for i in partitions
         println("The current day is ", current_time / 86400)
         ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
         println("The average density of the system is ", ρ̅)
-        toc = time()
+        toc = Base.time()
         println("The runtime for the simulation is ", (toc - tic) / 60, " minutes")
 
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1]) | isnan(ρ̅)
@@ -355,14 +382,14 @@ for i in partitions
     end
 end
 ##
-toc = time()
+toc = Base.time()
 println("The time for the simulation is ", toc - tic)
 tmp_ρ = components(test_state)[1]
 ρ̅_end = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
 # normalize statistics
 fmvar .*= 1 / statistic_counter
-smvar .*= 1 / (statistic_counter-1)
+smvar .*= 1 / (statistic_counter - 1)
 
 state .*= 1 / averaging_counter
 
@@ -398,3 +425,4 @@ file["grid"]["vertical_element_number"] = Kv
 file["grid"]["horizontal_element_number"] = Kh
 
 close(file)
+
