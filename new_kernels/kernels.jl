@@ -1,6 +1,6 @@
 using KernelAbstractions, Adapt
 using KernelAbstractions.Extras: @unroll
-
+# fix source and modifed boundary state
 struct ModifiedFluxDifferencing{L,G,A1,A2,A3,A4,VF,SNF}
     law::L
     grid::G
@@ -13,9 +13,11 @@ struct ModifiedFluxDifferencing{L,G,A1,A2,A3,A4,VF,SNF}
 end
 
 # Always needs the following functions defined 
-modified_source!(args...) = nothing
-modified_volumeflux!(args...) = nothing
-modified_surfaceflux!(args...) = nothing
+@inline modified_source!(args...) = nothing
+@inline modified_volumeflux!(args...) = nothing
+@inline modified_surfaceflux!(args...) = nothing
+@inline modified_boundarystate(::Atum.AbstractBalanceLaw, n⃗, q⁻, aux⁻, tag) = q⁻, aux⁻
+
 auxiliary(args...) = SVector(nothing)
 Bennu.referencecell(dg::ModifiedFluxDifferencing) = referencecell(dg.grid)
 
@@ -81,42 +83,64 @@ function (dg::ModifiedFluxDifferencing)(dq, q, time; increment=true)
     volume_form = dg.volume_form
     surface_flux = dg.surface_numericalflux
 
-        for dir in 1:dim
-            comp_stream = flux_differencing_volume!(device, workgroup)(
-                dg.law, dq, q, derivatives_1d(cell)[dir],
-                volume_form[dir],
-                metrics(dg.grid), dg.MJ, dg.MJI,
-                dg.auxstate,
-                dir == 1, # add_source
-                Val(dir), Val(dim), Val(workgroup[1]), Val(workgroup[2]), Val(workgroup[3]),
-                Val(numberofstates(dg.law)), Val(Naux),
-                Val(dir == 1 ? increment : true);
-                ndrange,
-                dependencies=comp_stream
-            )
-        end
 
-        faceix⁻, faceix⁺ = faceindices(grid)
-        facenormal, _ = components(facemetrics(grid))
+    for dir in 1:dim
+        comp_stream = flux_differencing_volume!(device, workgroup)(
+            dg.law, dq, q, derivatives_1d(cell)[dir],
+            volume_form[dir],
+            metrics(dg.grid), dg.MJ, dg.MJI,
+            dg.auxstate,
+            dir == 1, # add_source
+            Val(dir), Val(dim), Val(workgroup[1]), Val(workgroup[2]), Val(workgroup[3]),
+            Val(numberofstates(dg.law)), Val(Naux),
+            Val(dir == 1 ? increment : true);
+            ndrange,
+            dependencies=comp_stream
+        )
+    end
 
-        for dir in 1:dim
-            Nfp = round(Int, prod(Nq⃗) / Nq⃗[dir])
-            workgroup_face = (Nfp, 2)
-            ndrange = (Nfp * Ne, 2)
 
-            comp_stream = flux_differencing_surface!(device, workgroup_face)(
-                dg.law, dq, q,
-                Val(Bennu.connectivityoffsets(cell, Val(2))),
-                Val(dir),
-                Val(numberofstates(dg.law)),
-                surface_flux[dir],
-                dg.MJI, faceix⁻, faceix⁺, dg.faceMJ, facenormal, boundaryfaces(grid),
-                dg.auxstate,
-                Val(dim);
-                ndrange,
-                dependencies=comp_stream
-            )
-        end
+
+    faceix⁻, faceix⁺ = faceindices(grid)
+    facenormal, _ = components(facemetrics(grid))
+    
+    for dir in 1:dim
+        Nfp = round(Int, prod(Nq⃗) / Nq⃗[dir])
+        workgroup_face = (Nfp, 2)
+        ndrange = (Nfp * Ne, 2)
+
+        comp_stream = flux_differencing_surface!(device, workgroup_face)(
+            dg.law, dq, q,
+            Val(Bennu.connectivityoffsets(cell, Val(2))),
+            Val(dir),
+            Val(numberofstates(dg.law)),
+            surface_flux[dir],
+            dg.MJI, faceix⁻, faceix⁺, dg.faceMJ, facenormal, boundaryfaces(grid),
+            dg.auxstate,
+            Val(dim);
+            ndrange,
+            dependencies=comp_stream
+        )
+    end
+    
+
+    #=
+    Nfp = Nq⃗[1] * Nq⃗[2]
+    workgroup_face = (Nfp, 2)
+    ndrange = (Nfp * Ne, 2)
+
+    comp_stream = flux_differencing_surface_together!(device, workgroup_face)(
+        dg.law, dq, q,
+        Val(Bennu.connectivityoffsets(cell, Val(2))),
+        Val(numberofstates(dg.law)),
+        surface_flux[1],
+        dg.MJI, faceix⁻, faceix⁺, dg.faceMJ, facenormal, boundaryfaces(grid),
+        dg.auxstate,
+        Val(dim);
+        ndrange,
+        dependencies=comp_stream
+    )
+    =#
 
     wait(comp_stream)
 end
@@ -180,7 +204,7 @@ end
             aux1[s] = auxstate[ijk, e][s]
         end
 
-        # add_source && modified_source!(law, dqijk, q1, aux1)
+        add_source && modified_source!(law, dqijk, q1, aux1)
 
         @synchronize
 
@@ -199,11 +223,12 @@ end
                 id = k
                 ild = i + Nq1 * ((j - 1) + Nq2 * (n - 1))
             end
-        
+
             q2 = q[ild, e]
             aux2 = auxstate[ild, e]
-        
+
             @views modified_volumeflux!(volume_numericalflux, law, flux[:, :], q1, aux1, q2, aux2)
+            # modified_volumeflux!(volume_numericalflux, law, flux, q1, aux1, q2, aux2)
 
             Ddn = MJIijk * shared_D[id, n]
             Dnd = MJIijk * shared_D[n, id]
@@ -223,6 +248,7 @@ end
     end
 
 end
+
 ##
 @kernel function flux_differencing_surface!(law,
     dq,
@@ -267,17 +293,128 @@ end
 
         boundarytag = boundaryfaces[face, e⁻]
 
-        
         if boundarytag == 0
             id⁺ = faceix⁺[j, e⁻]
             q⁺ = q[id⁺]
             aux⁺ = auxstate[id⁺]
         else
-            # q⁺, aux⁺ = boundarystate(law, n⃗, q⁻, aux⁻, boundarytag)
+            q⁺, aux⁺ = modified_boundarystate(law, n⃗, q⁻, aux⁻, boundarytag)
         end
-        
+
         @views modified_surfaceflux!(numericalflux, law, flux[:], n⃗, q⁻, aux⁻, q⁺, aux⁺)
 
-        dq[id⁻] -= fMJ * flux[:] * MJI[id⁻] 
+        dq[id⁻] -= fMJ * flux[:] * MJI[id⁻]
     end
+end
+
+##
+@kernel function flux_differencing_surface_together!(law,
+    dq,
+    q,
+    ::Val{faceoffsets},
+    ::Val{Ns},
+    numericalflux,
+    MJI,
+    faceix⁻,
+    faceix⁺,
+    faceMJ,
+    facenormal,
+    boundaryfaces,
+    auxstate,
+    ::Val{dim}) where {faceoffsets,Ns,dim}
+    @uniform begin
+        FT = eltype(law)
+    end
+
+    e⁻ = @index(Group, Linear)
+    i, fi = @index(Local, NTuple)
+    flux = @private FT (Ns,)
+
+    faces = 1:2
+    @inbounds begin
+        face = faces[fi]
+        j = i + faceoffsets[face]
+        id⁻ = faceix⁻[j, e⁻]
+
+        n⃗ = facenormal[j, e⁻]
+        fMJ = faceMJ[j, e⁻]
+
+        aux⁻ = auxstate[id⁻]
+        q⁻ = q[id⁻]
+
+        boundarytag = boundaryfaces[face, e⁻]
+
+        if boundarytag == 0
+            id⁺ = faceix⁺[j, e⁻]
+            q⁺ = q[id⁺]
+            aux⁺ = auxstate[id⁺]
+        else
+            q⁺, aux⁺ = modified_boundarystate(law, n⃗, q⁻, aux⁻, boundarytag)
+        end
+
+        @views modified_surfaceflux!(numericalflux, law, flux[:], n⃗, q⁻, aux⁻, q⁺, aux⁺)
+
+        dq[id⁻] -= fMJ * flux[:] * MJI[id⁻]
+    end
+
+    @synchronize
+
+    faces = 3:4
+    @inbounds begin
+        face = faces[fi]
+        j = i + faceoffsets[face]
+        id⁻ = faceix⁻[j, e⁻]
+
+        n⃗ = facenormal[j, e⁻]
+        fMJ = faceMJ[j, e⁻]
+
+        aux⁻ = auxstate[id⁻]
+        q⁻ = q[id⁻]
+
+        boundarytag = boundaryfaces[face, e⁻]
+
+        if boundarytag == 0
+            id⁺ = faceix⁺[j, e⁻]
+            q⁺ = q[id⁺]
+            aux⁺ = auxstate[id⁺]
+        else
+            q⁺, aux⁺ = modified_boundarystate(law, n⃗, q⁻, aux⁻, boundarytag)
+        end
+
+        @views modified_surfaceflux!(numericalflux, law, flux[:], n⃗, q⁻, aux⁻, q⁺, aux⁺)
+
+        dq[id⁻] -= fMJ * flux[:] * MJI[id⁻]
+    end
+
+    @synchronize
+
+    if dim ==3 
+        faces = 5:6
+        @inbounds begin
+            face = faces[fi]
+            j = i + faceoffsets[face]
+            id⁻ = faceix⁻[j, e⁻]
+
+            n⃗ = facenormal[j, e⁻]
+            fMJ = faceMJ[j, e⁻]
+
+            aux⁻ = auxstate[id⁻]
+            q⁻ = q[id⁻]
+
+            boundarytag = boundaryfaces[face, e⁻]
+
+            if boundarytag == 0
+                id⁺ = faceix⁺[j, e⁻]
+                q⁺ = q[id⁺]
+                aux⁺ = auxstate[id⁺]
+            else
+                q⁺, aux⁺ = modified_boundarystate(law, n⃗, q⁻, aux⁻, boundarytag)
+            end
+
+            @views modified_surfaceflux!(numericalflux, law, flux[:], n⃗, q⁻, aux⁻, q⁺, aux⁺)
+
+            dq[id⁻] -= fMJ * flux[:] * MJI[id⁻]
+        end
+    end
+
 end

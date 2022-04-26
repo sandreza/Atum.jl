@@ -43,10 +43,10 @@ function bickleyjet(law, x⃗)
 end
 
 ## Specify the Grid 
-A = Array
+A = CuArray
 FT = Float64
 N = 3
-K = 16
+K = 32 * 2
 
 Nq = N + 1
 
@@ -67,7 +67,7 @@ cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 c = sqrt(constants(law).grav)
 dt = cfl * min_node_distance(grid) / c
 # timeend = @isdefined(_testing) ? 10dt : FT(200)
-timeend = 200.0
+timeend = 200.0 / 64
 println("dt is ", dt)
 q = fieldarray(undef, law, grid)
 q .= bickleyjet.(Ref(law), points(grid))
@@ -83,6 +83,7 @@ end
 odesolver = LSRK144(new_dg, q, dt)
 println("outputing now")
 # solve!(q, timeend, odesolver; after_step=do_output)
+q .= bickleyjet.(Ref(law), points(grid))
 tic = Base.time()
 solve!(q, timeend, odesolver) #  after_step=do_output)
 toc = Base.time()
@@ -93,6 +94,7 @@ println("new kernel: The time for the simulation is ", toc - tic)
 odesolver = LSRK144(dg, q, dt)
 println("outputing now")
 # solve!(q, timeend, odesolver; after_step=do_output)
+q .= bickleyjet.(Ref(law), points(grid))
 tic = Base.time()
 solve!(q, timeend, odesolver) #  after_step=do_output)
 toc = Base.time()
@@ -106,6 +108,7 @@ println("running again")
 odesolver = LSRK144(new_dg, q, dt)
 println("outputing now")
 # solve!(q, timeend, odesolver; after_step=do_output)
+q .= bickleyjet.(Ref(law), points(grid))
 tic = Base.time()
 solve!(q, timeend, odesolver) #  after_step=do_output)
 toc = Base.time()
@@ -117,6 +120,7 @@ println("new kernel: The time for the simulation is ", toc - tic)
 odesolver = LSRK144(dg, q, dt)
 println("outputing now")
 # solve!(q, timeend, odesolver; after_step=do_output)
+q .= bickleyjet.(Ref(law), points(grid))
 tic = Base.time()
 solve!(q, timeend, odesolver) #  after_step=do_output)
 toc = Base.time()
