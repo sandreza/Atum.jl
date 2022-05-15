@@ -44,12 +44,21 @@ end
 struct EntropyConservativeFlux <: AbstractNumericalFlux end
 struct KennedyGruberFlux <: AbstractNumericalFlux end
 struct LinearizedKennedyGruberFlux <: AbstractNumericalFlux end
+struct LinearizedCentralFlux <: AbstractNumericalFlux end
 struct RefanovFlux{S} <: AbstractNumericalFlux
   scale::S
 end
 
 RefanovFlux() = RefanovFlux(1.0)
 struct LinearizedRefanovFlux{S} <: AbstractNumericalFlux
+  scale::S
+end
+
+
+struct CentralRefanovFlux{S} <: AbstractNumericalFlux
+  scale::S
+end
+struct LinearizedCentralRefanovFlux{S} <: AbstractNumericalFlux
   scale::S
 end
 

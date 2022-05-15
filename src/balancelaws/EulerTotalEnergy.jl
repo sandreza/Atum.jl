@@ -341,4 +341,128 @@ module EulerTotalEnergy
     hcat(fρ, fρu⃗, fρe)
   end
 
+
+  function Atum.twopointflux(::Atum.CentralFlux,
+    law::EulerTotalEnergyLaw,
+    state_1, aux_1, state_2, aux_2)
+  
+    ρ_1, ρu_1, ρe_1 = unpackstate(law, state_1)
+    Φ₁ = geopotential(law, aux_1)
+  
+    ρ_2, ρu_2, ρe_2 = unpackstate(law, state_2)
+    Φ₂ = geopotential(law, aux_2)
+  
+    # construct averages 
+    p_1 = pressure(law, ρ_1, ρu_1, ρe_1, Φ₁)
+    p_2 = pressure(law, ρ_2, ρu_2, ρe_2, Φ₂)
+  
+    fρ = avg(ρu_1, ρu_2)
+    fρu⃗ = avg(ρu_1 * ρu_1' / ρ_1, ρu_2 * ρu_2' / ρ_2) + avg(p_1, p_2) * I
+    fρe = avg(ρu_1 / ρ_1 * (ρe_1 + p_1), ρu_2 / ρ_2 * (ρe_2 + p_2))
+  
+    # product rule gravity
+    α = avg(ρ_1, ρ_2) * 0.5
+    fρu⃗ -= α * (Φ₁ - Φ₂) * I
+  
+    hcat(fρ, fρu⃗, fρe)
+  end
+
+  function Atum.twopointflux(::Atum.LinearizedCentralFlux,
+    law::EulerTotalEnergyLaw,
+    state_1, aux_1, state_2, aux_2)
+  
+    ρ_1, ρu_1, ρe_1 = unpackstate(law, state_1)
+    p_1 = linearized_pressure(law, state_1, aux_1)
+    ρᵣ_1, ρuᵣ_1, ρeᵣ_1 = unpackrefstate(law, aux_1)
+    pᵣ_1 = reference_pressure(law, aux_1)
+    Φ₁ = geopotential(law, aux_1)
+  
+  
+    ρ_2, ρu_2, ρe_2 = unpackstate(law, state_2)
+    p_2 = linearized_pressure(law, state_2, aux_2)
+    ρᵣ_2, ρuᵣ_2, ρeᵣ_2 = unpackrefstate(law, aux_2)
+    pᵣ_2 = reference_pressure(law, aux_2)
+    Φ₂ = geopotential(law, aux_2)
+  
+    # calculate u_1, e_1, and reference states
+    u_1 = ρu_1 / ρᵣ_1 - ρ_1 * ρuᵣ_1 / (ρᵣ_1^2)
+  
+    uᵣ_1 = ρuᵣ_1 / ρᵣ_1
+  
+    ## State 2 Stuff 
+    # calculate u_2, e_2, and reference states
+    u_2 = ρu_2 / ρᵣ_2 - ρ_2 * ρuᵣ_2 / (ρᵣ_2^2)
+  
+    uᵣ_2 = ρuᵣ_2 / ρᵣ_2
+  
+    # construct averages for perturbation variables
+    ρ_avg = avg(ρ_1, ρ_2)
+    ρu_avg = avg(ρu_1, ρu_2)
+    p_avg = avg(p_1, p_2)
+  
+    fρ = ρu_avg
+    fρu⃗ = avg(ρu_1 * uᵣ_1' + ρuᵣ_1 * u_1' , ρu_2 * uᵣ_2' + ρuᵣ_2 * u_2') + p_avg * I
+    fρe = avg(u_1 * (ρeᵣ_1 + pᵣ_1) + uᵣ_1 * (ρe_1 + p_1), u_2 * (ρeᵣ_2 + pᵣ_2) + uᵣ_2 * (ρe_2 + p_2))
+  
+    # product rule gravity
+    α = ρ_avg * 0.5
+    fρu⃗ -= α * (Φ₁ - Φ₂) * I
+  
+    hcat(fρ, fρu⃗, fρe)
+  end
+
+  function Atum.surfaceflux(rf::Atum.LinearizedCentralRefanovFlux, law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, q⁺, aux⁺)
+  
+    # Flux
+    f = Atum.twopointflux(Atum.LinearizedCentralFlux(), law, q⁻, aux⁻, q⁺, aux⁺)
+  
+    # Penalty
+    c⁻ = reference_soundspeed(law, aux⁻)
+    c⁺ = reference_soundspeed(law, aux⁺)
+    c = max(c⁻, c⁺) * rf.scale
+  
+    # - states
+    ρ⁻, ρu⁻, ρe⁻ = unpackstate(law, q⁻)
+  
+    # + states
+    ρ⁺, ρu⁺, ρe⁺ = unpackstate(law, q⁺)
+  
+    Δρ = ρ⁺ - ρ⁻
+    Δρu = ρu⁺ - ρu⁻
+    Δρe = ρe⁺ - ρe⁻
+  
+    fp_ρ = c * Δρ * 0.5
+    fp_ρu = c * Δρu * 0.5
+    fp_ρe = c * Δρe * 0.5
+  
+    f' * n⃗ - SVector(fp_ρ, fp_ρu..., fp_ρe)
+  end
+
+  function Atum.surfaceflux(rf::Atum.CentralRefanovFlux, law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, q⁺, aux⁺)
+  
+    # Flux
+    f = Atum.twopointflux(Atum.CentralFlux(), law, q⁻, aux⁻, q⁺, aux⁺)
+  
+    # Penalty
+    c⁻ = reference_soundspeed(law, aux⁻)
+    c⁺ = reference_soundspeed(law, aux⁺)
+    c = max(c⁻, c⁺) * rf.scale
+  
+    # - states
+    ρ⁻, ρu⁻, ρe⁻ = unpackstate(law, q⁻)
+  
+    # + states
+    ρ⁺, ρu⁺, ρe⁺ = unpackstate(law, q⁺)
+  
+    Δρ = ρ⁺ - ρ⁻
+    Δρu = ρu⁺ - ρu⁻
+    Δρe = ρe⁺ - ρe⁻
+  
+    fp_ρ = c * Δρ * 0.5
+    fp_ρu = c * Δρu * 0.5
+    fp_ρe = c * Δρe * 0.5
+  
+    f' * n⃗ - SVector(fp_ρ, fp_ρu..., fp_ρe)
+  end
+
 end # end of module

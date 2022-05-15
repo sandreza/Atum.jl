@@ -25,6 +25,7 @@ include("balancelaws/shallow_water.jl")
 include("balancelaws/euler.jl")
 include("balancelaws/euler_gravity.jl")
 include("balancelaws/EulerTotalEnergy.jl")
+include("balancelaws/euler_with_tracer.jl")
 
 
 end # module
