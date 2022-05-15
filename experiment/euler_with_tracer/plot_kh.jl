@@ -22,25 +22,35 @@ newgrid = [SVector(x, y) for x in xlist, y in ylist]
 
 ξlist, elist = cube_interpolate_2D(newgrid, cpugrid, arch=CPU())
 
-newc = zeros(size(newgrid))
-oldc = cpu_components[end]
-interpolate_field_2D!(newc, oldc, elist, ξlist, r, ω, (Nq, Nq); arch=CPU(), blocksize=16)
+new2 = zeros(size(newgrid))
+old2 = components(q2)[end]
+interpolate_field_2D!(new2, old2, elist, ξlist, r, ω, (Nq, Nq); arch=CPU(), blocksize=16)
 
-newρ = zeros(size(newgrid))
-oldρ = cpu_components[1]
-interpolate_field_2D!(newρ, oldρ, elist, ξlist, r, ω, (Nq, Nq); arch=CPU(), blocksize=16)
+new4 = zeros(size(newgrid))
+old4 = components(q4)[end]
+interpolate_field_2D!(new4, old4, elist, ξlist, r, ω, (Nq, Nq); arch=CPU(), blocksize=16)
+
+new6 = zeros(size(newgrid))
+old6 = components(q6)[end]
+interpolate_field_2D!(new6, old6, elist, ξlist, r, ω, (Nq, Nq); arch=CPU(), blocksize=16)
 
 ## 
-fig = Figure()
-ax = Axis(fig[1, 1]; title = "tracer")
-ax2 = Axis(fig[1, 2]; title = "density")
+fig = Figure(resolution = (1500, 500))
+ax = Axis(fig[1, 1]; title="tracer t = 2")
+ax2 = Axis(fig[1, 2]; title="tracer t = 4")
+ax3 = Axis(fig[1, 3]; title="tracer t = 6")
+
 colorrange = (0, 1)
-heatmap!(ax, xlist, ylist, newc, colormap=:balance, colorrange=colorrange)
+heatmap!(ax, xlist, ylist, new2, colormap=:balance, colorrange=colorrange, interpolate=true)
 ylims!(ax, (0, 1))
 
-colorrange2 = (1, 2)
-heatmap!(ax2, xlist, ylist, newρ, colormap= Reverse(:balance), colorrange=colorrange2)
+colorrange2 = (0, 1)
+heatmap!(ax2, xlist, ylist, new4, colormap=:balance, colorrange=colorrange2, interpolate=true)
 ylims!(ax2, (0, 1))
+
+colorrange3 = (0, 1)
+heatmap!(ax3, xlist, ylist, new6, colormap=:balance, colorrange=colorrange2, interpolate=true)
+ylims!(ax3, (0, 1))
 
 display(fig)
 
