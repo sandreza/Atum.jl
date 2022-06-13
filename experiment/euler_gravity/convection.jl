@@ -16,9 +16,9 @@ const parameters = (
     R=287,
     pₒ=1e5, # get_planet_parameter(:MSLP),
     g=9.81,
-    cp=1e3,
-    γ=1.4,
-    cv=1e3 / 1.4,
+    cp = 287 / (1 - 1 / 1.4),
+    γ = 1.4,
+    cv = 287 / (1 - 1 / 1.4) - 287.0,
     T_0=0.0,
     xmax=3e3,
     ymax=3e3,
@@ -57,9 +57,9 @@ function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     damping_profile = -exp(-(L - z) / s_ℓ)
 
     # Apply convective forcing
-    source[2] += λ * damping_profile * ρu⃗[1]
-    source[3] += λ * damping_profile * ρu⃗[2]
-    source[4] += λ * damping_profile * ρu⃗[3]
+    # source[2] += λ * damping_profile * ρu⃗[1]
+    # source[3] += λ * damping_profile * ρu⃗[2]
+    # source[4] += λ * damping_profile * ρu⃗[3]
     source[5] += ρ * radiation_profile
 
     return nothing
@@ -107,23 +107,26 @@ Nq = N + 1
 law = EulerGravityLaw{FT,3}()
 # pp = 2
 cell = LobattoCell{FT,A}(Nq, Nq, Nq)
+cpu_cell = LobattoCell{FT,Array}(Nq, Nq, Nq)
 v1d = range(FT(-1.5e3), stop=FT(1.5e3), length=K + 1)
 v2d = range(FT(-1.5e3), stop=FT(1.5e3), length=K + 1)
 v3d = range(FT(0), stop=FT(3.0e3), length=K + 1)
 grid = brickgrid(cell, (v1d, v2d, v3d); periodic=(true, true, false))
+cpu_grid = brickgrid(cpu_cell, (v1d, v2d, v3d); periodic=(true, true, false))
 x⃗ = points(grid)
 dg = DGSEM(; law, grid, volume_form, surface_numericalflux=RoeFlux())
-fsdg = FluxSource(; law, grid, volume_form, surface_numericalflux=RoeFlux())
-dg_r = DGSEM(; law, grid, volume_form, surface_numericalflux=RusanovFlux())
+# fsdg = FluxSource(; law, grid, volume_form, surface_numericalflux=RoeFlux())
+# dg_r = DGSEM(; law, grid, volume_form, surface_numericalflux=RusanovFlux())
 
 cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c * 1.0
 println(" the dt is ", dt)
-timeend = 60*60
+timeend = 2 * 60 * 60
 
 q = fieldarray(undef, law, grid)
+qc = fieldarray(undef, law, cpu_grid)
 q0 = fieldarray(undef, law, grid)
 q .= initial_condition.(Ref(law), points(grid))
 q0 .= initial_condition.(Ref(law), points(grid))
@@ -142,7 +145,7 @@ do_output = function (step, time, q)
     end
 end
 
-odesolver = LSRK144(fsdg, q, dt)
+odesolver = LSRK144(dg, q, dt)
 
 tic = time()
 solve!(q, timeend, odesolver; after_step=do_output)

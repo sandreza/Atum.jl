@@ -1,6 +1,9 @@
+# filepath = "poly3.jld2"
+filepath = "HeldSuarezStatistics_" * "Nev" * string(Kv) * "_Neh" * string(Kh) * "_Nq" * string(Nq⃗[1]) * ".jld2"
+
 include("sphere_statistics_functions.jl")
 println("saving statistics")
-last_step_mvar = mean_variables.(Ref(law), test_state, aux)
+last_step_mvar = fmvartmp # mean_variables.(Ref(law), test_state, aux)
 
 # just to initialize for saving
 cpu_aux = sphere_auxiliary.(Ref(law), Ref(hs_p), cpu_x⃗, cpu_state)
@@ -8,9 +11,9 @@ cpu_mvar = mean_variables.(Ref(law), cpu_state, cpu_aux)
 cpu_svar = second_moment_variables.(cpu_mvar)
 
 fmnames = ("ρ", "u", "v", "w", "p", "T")
-smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp")
+smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT")
 
-filepath = "HeldSuarezStatistics_" * "Nev" * string(Kv) * "_Neh" * string(Kh) * "_Nq" * string(Nq⃗[1]) * ".jld2"
+
 file = jldopen(filepath, "a+")
 JLD2.Group(file, "instantaneous")
 JLD2.Group(file, "firstmoment")

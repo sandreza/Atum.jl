@@ -125,14 +125,22 @@ function cube_interpolate(newgrid, oldgrid; arch=CUDADevice())
     if arch isa CUDADevice
         ξlist = CuArray([@SVector[0.0, 0.0, 0.0] for i in eachindex(newgrid)])
         elist = CuArray(zeros(Int, length(newgrid)))
+    else
+        ξlist = Array([@SVector[0.0, 0.0, 0.0] for i in eachindex(newgrid)])
+        elist = Array(zeros(Int, length(newgrid)))
     end
-    x, y, z = components(grid.points)
+    x, y, z = components(oldgrid.points)
     nex, ney, nez = (size(oldgrid.vertices) .- 1)
     xinfo = (extrema(x)..., nex)
     yinfo = (extrema(y)..., ney)
     zinfo = (extrema(z)..., nez)
+
     if arch isa CUDADevice
         kernel! = cube_kernel!(arch, 256)
+        event = kernel!(ξlist, elist, newgrid, x, xinfo, y, yinfo, z, zinfo, ndrange=size(elist))
+        wait(event)
+    else
+        kernel! = cube_kernel!(arch, 16)
         event = kernel!(ξlist, elist, newgrid, x, xinfo, y, yinfo, z, zinfo, ndrange=size(elist))
         wait(event)
     end

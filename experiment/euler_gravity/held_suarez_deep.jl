@@ -79,16 +79,17 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, hs_p, x⃗, state)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], tmp..., state[ix_ρe], ϕ)
 end
 
-N = 4
+N = 5
 Nq = N + 1
-Nq⃗ = (Nq, Nq, Nq)
+Nq⃗ = (Nq, Nq, 4)
 dim = 3
 
 FT = Float64
 A = CuArray
 
-Kv = 8 # 12 
-Kh = 9 # 12 
+Kv = 15 # 12 
+Kh = 10 # 12 
+
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
@@ -209,7 +210,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -k_T * ρ * cv_d * (T - T_equil)
-    # source_ρe += (ρu' * source_ρu) / ρ
+    source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -230,7 +231,9 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
 vcfl = Inf
-hcfl = 0.5 # hcfl = 0.2 for a long run
+hcfl = 0.5 # hcfl = 0.25 for a long run
+reset_cfl = 0.15 # resets the cfl when doin a long run
+
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
@@ -250,10 +253,8 @@ P3 = CuArray(zeros(Nq⃗[3], Nq⃗[3]))
 tmp = cell.weights_1d[1][:, :, 1]'
 P1 .= tmp / 2
 P2 .= P1
-P3 .= P1 * 0 + I
+P3 .= P3 * 0 + I
 P = Bennu.Kron((P3, P2, P1)) # need to reverse the list
-
-
 
 test_state .= old_state
 stable_state .= old_state
@@ -267,7 +268,6 @@ zp = components(aux)[3]
 endday = 30.0 * 40
 tmp_ρ = components(test_state)[1]
 ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
-
 
 fmvar = mean_variables.(Ref(law), state, aux)
 smvar = second_moment_variables.(fmvar)
@@ -287,18 +287,20 @@ save_time = 0.0
 averaging_counter = 0.0
 statistic_counter = 0.0
 
+stable_cfl = []
+
 state .= test_state
 
 for i in partitions
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     # remove element lateral variation in slowest evolving variables
 
-    _, _, _, tmp1, tmp2, tmp3, tmp4, tmp5, _ = components(aux)
-    tmp1 .= (P * tmp1)
+    # _, _, _, tmp1, tmp2, tmp3, tmp4, tmp5, _ = components(aux)
+    # tmp1 .= (P * tmp1)
     # tmp2 .= (P * tmp2)
     # tmp3 .= (P * tmp3)
     # tmp4 .= (P * tmp4)
-    tmp5 .= (P * tmp5)
+    # tmp5 .= (P * tmp5)
 
     # end
     dg_fs.auxstate .= aux
@@ -316,7 +318,7 @@ for i in partitions
     timeend = odesolver.time
     global current_time += timeend
 
-    if statistic_save & (current_time / 86400 > 200) & (i % 10 == 0)
+    if statistic_save & (current_time / 86400 > 200) & (i % 1 == 0)
         println("gathering statistics at day ", current_time / 86400)
         println("The counter is at ", statistic_counter)
         global statistic_counter += 1.0
@@ -376,7 +378,14 @@ for i in partitions
                 stable_state .= test_state
                 global save_partition = i
                 global save_time = current_time
+                push!(stable_cfl, dt * c_max / Δx)
             end
+            if statistic_counter > 40
+                reset_dt = reset_cfl * Δx / c_max
+                global dt = max(reset_dt, dt)
+                println("setting  dt to ", dt)
+            end
+            
         end
         println("-----")
     end
