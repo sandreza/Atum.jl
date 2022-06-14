@@ -95,7 +95,7 @@ A = CuArray
 FT = Float64
 N = 3
 
-K = 8
+K = 50
 vf = FluxDifferencingForm(KennedyGruberFlux())
 println("DOFs = ", (N + 1) * K, " with VF ", vf)
 
@@ -123,7 +123,7 @@ cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c * 1.0
 println(" the dt is ", dt)
-timeend = 2 * 60 * 60
+timeend = 1.5 * 60 * 60
 
 q = fieldarray(undef, law, grid)
 qc = fieldarray(undef, law, cpu_grid)
@@ -151,7 +151,7 @@ tic = time()
 solve!(q, timeend, odesolver; after_step=do_output)
 outputvtk && vtk_save(pvd)
 toc = time()
-println("The time for the simulation is ", toc - tic)
+println("The time for the simulation is ", toc - tic, " seconds")
 println(q[1])
 ##
 # dg(q, q0, 0.0, increment = false)
