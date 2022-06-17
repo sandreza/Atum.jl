@@ -60,10 +60,10 @@ cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_grid = cubedspheregrid(cpu_cell, vert_coord, Kh)
 
-scale = 6
-rlist = range(vert_coord[1] + 000, vert_coord[end], length=19)
-rlist1 = range(vert_coord[1], vert_coord[1] + 2e3, length = 13)
-rlist2 = range(rlist1[end] + 1e3, vert_coord[end], length=11)
+scale = 2
+rlist = range(vert_coord[1] + 000, vert_coord[end], length=15 * scale)
+# rlist1 = range(vert_coord[1], vert_coord[1] + 2e3, length = 13)
+# rlist2 = range(rlist1[end] + 1e3, vert_coord[end], length=11)
 rlist = [rlist1... , rlist2...]
 θlist = range(-π, π, length=90 * scale)
 ϕlist = range(0, π, length=45 * scale)

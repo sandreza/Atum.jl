@@ -37,5 +37,24 @@ function second_moment_variables(mvar)
     wT = w * T 
     ρρ = ρ * ρ 
     pp = p * p
-    SVector(uu, vv, ww, uv, uw, vw, uT, vT, wT, ρρ, pp)
+    TT = T * T
+    SVector(uu, vv, ww, uv, uw, vw, uT, vT, wT, ρρ, pp, TT)
+end
+
+function second_moment_variables2!(smvar, mvar)
+    ρ, u, v, w, p, T = mvar
+    uu, vv, ww, uv, uw, vw, uT, vT, wT, ρρ, pp, TT = smvar
+    @. uu = u * u
+    @. vv = v * v
+    @. ww = w * w
+    @. uv = u * v
+    @. uw = u * w
+    @. vw = v * w
+    @. uT = u * T
+    @. vT = v * T
+    @. wT = w * T
+    @. ρρ = ρ * ρ
+    @. pp = p * p
+    @. TT = T * T
+    return nothing
 end

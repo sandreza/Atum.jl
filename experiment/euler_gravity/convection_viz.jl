@@ -1,4 +1,4 @@
-using LinearAlgebra
+using LinearAlgebra, GLMakie
 include("interpolate.jl")
 
 
@@ -70,7 +70,7 @@ options = (; titlesize = 30, ylabelsize = 32,
 
 fig_V = Figure(resolution=(1000, 650));
 volume_width = 3
-height_index = 80
+height_index = floor(Int, M/10 * 4) # 120 for M = 300
 updraftquantile = 0.83
 
 ax = LScene(fig_V[1:8, 2:volume_width+1], scenekw=(camera=cam3d!, show_axis=true));
