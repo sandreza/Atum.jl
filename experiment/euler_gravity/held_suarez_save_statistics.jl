@@ -86,14 +86,16 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Kv = 5
-Kh = 5
+Nq⃗ = (5, 5, 5)
+Kv = 4
+Kh = 6
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
+vert_coord = FT(hs_p.a) .+ (-0.5 .* (cos.(range(0, π, length=Kv + 1))) .+ 0.5) * 3e4
 
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
@@ -251,11 +253,12 @@ tmp_ρ = components(test_state)[1]
 
 fmvar = mean_variables.(Ref(law), state, aux)
 fmvar .*= 0.0
+smvar = second_moment_variables.(fmvar)
 
 ##
 # interpolate fields 
 println("precomputing interpolation data")
-scale = 1
+scale = 4
 rlist = range(vert_coord[1] + 000, vert_coord[end], length=15 * scale)
 θlist = range(-π, π, length=90 * scale)
 ϕlist = range(0, π, length=45 * scale)
@@ -333,72 +336,75 @@ for i in partitions
 
     end
 
-if i % display_skip == 0
-    println("--------")
-    println("done with ", display_skip * timeend / 60, " minutes")
-    println("partition ", i, " out of ", partitions[end])
-    local ρ, ρu, ρv, ρw, ρet = components(test_state)
-    u = ρu ./ ρ
-    v = ρv ./ ρ
-    w = ρw ./ ρ
-    println("maximum x-velocity ", maximum(u))
-    println("maximum y-velocity ", maximum(v))
-    println("maximum z-velocity ", maximum(w))
-    uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
-    minuʳ = minimum(uʳ)
-    maxuʳ = maximum(uʳ)
-    println("extrema vertical velocity ", (minuʳ, maxuʳ))
-    hs_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
-    hs_density = components(test_state)[1]
-    hs_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), hs_density, hs_pressure)
-    speed = @. sqrt(u^2 + v^2 + w^2)
-    c_max = maximum(hs_soundspeed)
-    mach_number = maximum(speed ./ hs_soundspeed)
-    println("The maximum soundspeed is ", c_max)
-    println("The largest mach number is ", mach_number)
-    println(" the vertical cfl is ", dt * c_max / Δz)
-    println(" the horizontal cfl is ", dt * c_max / Δx)
-    println("The dt is now ", dt)
-    println("The current day is ", current_time / 86400)
-    ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
-    println("The average density of the system is ", ρ̅)
-    toc = Base.time()
-    println("The runtime for the simulation is ", (toc - tic) / 60, " minutes")
+    if i % display_skip == 0
+        println("--------")
+        println("done with ", display_skip * timeend / 60, " minutes")
+        println("partition ", i, " out of ", partitions[end])
+        local ρ, ρu, ρv, ρw, ρet = components(test_state)
+        u = ρu ./ ρ
+        v = ρv ./ ρ
+        w = ρw ./ ρ
+        println("maximum x-velocity ", maximum(u))
+        println("maximum y-velocity ", maximum(v))
+        println("maximum z-velocity ", maximum(w))
+        uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
+        minuʳ = minimum(uʳ)
+        maxuʳ = maximum(uʳ)
+        println("extrema vertical velocity ", (minuʳ, maxuʳ))
+        hs_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
+        hs_density = components(test_state)[1]
+        hs_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), hs_density, hs_pressure)
+        speed = @. sqrt(u^2 + v^2 + w^2)
+        c_max = maximum(hs_soundspeed)
+        mach_number = maximum(speed ./ hs_soundspeed)
+        println("The maximum soundspeed is ", c_max)
+        println("The largest mach number is ", mach_number)
+        println(" the vertical cfl is ", dt * c_max / Δz)
+        println(" the horizontal cfl is ", dt * c_max / Δx)
+        println("The dt is now ", dt)
+        println("The current day is ", current_time / 86400)
+        ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+        println("The average density of the system is ", ρ̅)
+        toc = Base.time()
+        println("The runtime for the simulation is ", (toc - tic) / 60, " minutes")
 
-    if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1]) | isnan(ρ̅)
-        println("The simulation NaNed, decreasing timestep and using stable state")
-        local i = save_partition
-        global current_time = save_time
-        test_state .= stable_state
-        state .= stable_state
-        global dt *= 0.9
+        if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1]) | isnan(ρ̅)
+            println("The simulation NaNed, decreasing timestep and using stable state")
+            local i = save_partition
+            global current_time = save_time
+            test_state .= stable_state
+            state .= stable_state
+            global dt *= 0.9
 
-        global statistic_counter = 1
-        aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
-        global fmvar .= mean_variables.(Ref(law), test_state, aux)
-
-    else
-        if (abs(minuʳ) + abs(maxuʳ)) < 20.0
-            println("creating backup state")
-            stable_state .= test_state
-            global save_partition = i
-            global save_time = current_time
-            push!(stable_cfl, dt * c_max / Δx)
+            global statistic_counter = 1
+            aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
+            global fmvar .= mean_variables.(Ref(law), test_state, aux)
+            global gathermeanlist .*= false
+            global gathersecondlist .*= false
+        else
+            if (abs(minuʳ) + abs(maxuʳ)) < 20.0
+                println("creating backup state")
+                stable_state .= test_state
+                global save_partition = i
+                global save_time = current_time
+                push!(stable_cfl, dt * c_max / Δx)
+            end
+            if statistic_counter > 40
+                reset_dt = reset_cfl * Δx / c_max
+                global dt = max(reset_dt, dt)
+                println("setting  dt to ", dt)
+            end
         end
-        if statistic_counter > 40
-            reset_dt = reset_cfl * Δx / c_max
-            global dt = max(reset_dt, dt)
-            println("setting  dt to ", dt)
-        end
+        println("-----")
     end
-    println("-----")
+
 end
-
-    end
 
 ##
 toc = Base.time()
-println("The time for the simulation is ", toc - tic)
+println("The time for the simulation is ", toc - tic, " seconds")
+println("The time for the simulation is ", (toc - tic) / (60), " minutes")
+println("The time for the simulation is ", (toc - tic) / (60 * 60), " hours")
 # normalize statistics
 gathermeanlist .*= 1 / statistic_counter
 gathersecondlist .*= 1 / (statistic_counter - 1)
@@ -421,10 +427,14 @@ JLD2.Group(file, "grid")
 for (i, statename) in enumerate(fmnames)
     file["firstmoment"][statename] = Array(gathermeanlist[i])
 end
-# instantaneous
-gpu_components = mean_variables.(Ref(law), test_state, aux)
+
+# instantaneous (don't forget to interpolate)
+fmvar .= mean_variables.(Ref(law), test_state, aux)
+for (newf, oldf) in zip(meanlist, meanoldlist)
+    interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
+end
 for (i, statename) in enumerate(fmnames)
-    file["instantaneous"][statename] = Array(gpu_components[i])
+    file["instantaneous"][statename] = Array(meanlist[i])
 end
 # Second moment
 for (i, statename) in enumerate(smnames)

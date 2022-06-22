@@ -14,7 +14,7 @@ using BenchmarkTools
 
 import Atum: boundarystate, source!
 
-statistic_save = true
+statistic_save = false
 
 include("sphere_utils.jl")
 include("sphere_statistics_functions.jl")
@@ -81,14 +81,14 @@ end
 
 N = 5
 Nq = N + 1
-Nq⃗ = (Nq, Nq, 4)
+Nq⃗ = (Nq, Nq, Nq)
 dim = 3
 
 FT = Float64
 A = CuArray
 
-Kv = 15 # 12 
-Kh = 10 # 12 
+Kv = 3 # 12 
+Kh = 3 # 12 
 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
@@ -312,7 +312,7 @@ for i in partitions
     # current reference state α = 1.0
     # midpoint type extrapolation: α = 1.5
     # backward euler type extrapolation: α = 2.0
-    α = 1.5
+    α = 1.5 # 1.5
     state .= α * (test_state) + (1 - α) * state
 
     timeend = odesolver.time
