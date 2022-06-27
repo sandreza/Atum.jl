@@ -5,13 +5,13 @@ for (newf, oldf) in zip(newlist, oldlist)
     interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
 end
 
-fig2 = Figure(resolution=(3200, 600))
+fig2 = Figure(resolution=(1600, 800))
 axlist = []
 for i in 1:6
     push!(axlist, Axis(fig2[1, i]))
     heatmap!(axlist[i], ϕlist, rlist, mean(Array(gathermeanlist[i][:, :, :]), dims=1)[1, :, :], interpolate=true)
 end
-display(fig)
+display(fig2)
 
 ##
 T = gathermeanlist[end]
@@ -52,7 +52,8 @@ avgUV = Array(gathersecondlist[state_index])
 state_index = argmin(isnothing.(match.(Ref(r"TT"), smnames)))
 avgTT = Array(gathersecondlist[state_index])
 
-fig = Figure(resolution=(1700 + 600, 1000 + 400))
+# fig = Figure(resolution=(1700 + 0 * 600, 1000 + 0 * 400))
+fig = Figure()
 add_label = true
 
 state_names = []
@@ -69,6 +70,33 @@ UpVp = sum(avgUV, dims=1)[1, :, :] / length(θlist) .- U̅ .* V̅
 HTKE = 0.5 .* (UpUp + VpVp)
 VpTp = sum(avgVT, dims=1)[1, :, :] / length(θlist) .- V̅ .* T̅
 TpTp = sum(avgTT, dims=1)[1, :, :] / length(θlist) .- T̅ .* T̅
+
+##
+fig_inst = Figure()
+ax11_inst = Axis(fig_inst[1, 1])
+ax12_inst = Axis(fig_inst[1, 2])
+ax21_inst = Axis(fig_inst[2, 1])
+ax22_inst = Axis(fig_inst[2, 2])
+
+sl_y = Slider(fig_inst[3, 1:2], range=eachindex(rlist), horizontal=true, startvalue=1)
+height_index = sl_y.value
+# heatmap!(ax11, @lift(newT[:, :, $height_index]), colormap=:afmhot, interpolate=true, colorrange=(265, 310))
+# heatmap!(ax21, @lift(newP[:, :, $height_index]), colormap=:bone_1, interpolate=true)
+# heatmap!(ax12, @lift(newU[:, :, $height_index]), colormap=:balance, interpolate=true, colorrange=(-30, 30))
+# heatmap!(ax22, @lift(newV[:, :, $height_index]), colormap=:balance, interpolate=true, colorrange=(-30, 30))
+# ρ, u, v, w, p, T
+newT = Array(meanlist[end])
+newP = Array(meanlist[end-1])
+newU = Array(meanlist[2])
+newV = Array(meanlist[3])
+heatmap!(ax11_inst, θlist, ϕlist, @lift(newT[:, :, $height_index]), colormap=:afmhot, interpolate=true)
+heatmap!(ax21_inst, θlist, ϕlist, @lift(newP[:, :, $height_index]), colormap=:bone_1, interpolate=true)
+heatmap!(ax12_inst, θlist, ϕlist, @lift(newU[:, :, $height_index]), colormap=:balance, interpolate=true)
+heatmap!(ax22_inst, θlist, ϕlist, @lift(newV[:, :, $height_index]), colormap=:balance, interpolate=true)
+
+display(fig_inst)
+
+##
 
 
 i = 1
@@ -156,3 +184,5 @@ contour_heatmap!(ax6, ϕ, p_coord, slice_zonal,
     contour_levels, colorrange, add_labels=add_label,
     colormap=:thermometer, random_seed=10)
 hideydecorations!(ax6, grid=false)
+
+display(fig)
