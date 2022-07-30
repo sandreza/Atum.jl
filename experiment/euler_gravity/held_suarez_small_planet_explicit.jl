@@ -20,7 +20,7 @@ include("sphere_utils.jl")
 include("interpolate.jl")
 include("sphere_statistics_functions.jl")
 
-const X = 20.0; # small planet parmaeter
+const X = 1 * 40.0; # small planet parmaeter
 
 hs_p = (
     a=6378e3 / X,
@@ -92,8 +92,8 @@ FT = Float64
 A = CuArray
 
 Nq⃗ = (5, 5, 5)
-Kv = 6
-Kh = 6
+Kv = 2
+Kh = 5
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
@@ -201,7 +201,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     # horizontal projection option
     k = coord / norm(coord)
-    P = I - 0 * k * k' # technically should project out pressure normal
+    P = I - k * k' # technically should project out pressure normal
     source_ρu = -X * k_v * P * ρu # - top_sponge * ρu
 
     # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
@@ -228,7 +228,7 @@ dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numerica
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 dg_explicit = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf_explicit)
 
-vcfl = 1.8 # 0.25
+vcfl = 2 * 1.8 # 0.25
 hcfl = 1.8 # 0.25 # hcfl = 0.25 for a long run
 reset_cfl = 0.15 # resets the cfl when doin a long run
 
@@ -297,7 +297,7 @@ gathersecondlist = copy(secondlist)
 ##
 display_skip = 50
 tic = Base.time()
-partitions = 1:endday*18*4*X# 24*3  # 1:24*endday*3 for updating every 20 minutes
+partitions = 1:endday*18*X# 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
@@ -331,7 +331,7 @@ for i in partitions
     timeend = odesolver.time
     global current_time += timeend
 
-    if statistic_save & (current_time / 86400 > 200) & (i % 4 == 0)
+    if statistic_save & (current_time / 86400 > 400 / X) & (i % 4 == 0)
         println("gathering statistics at day ", current_time / 86400)
         println("The counter is at ", statistic_counter)
         global statistic_counter += 1.0
@@ -422,7 +422,7 @@ gathersecondlist .*= 1 / (statistic_counter - 1)
 
 filepath = "SmallHeldSuarezStatistics_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
 filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
-filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * ".jld2"
+filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * "_X_" * string(X) * ".jld2"
 
 fmnames = ("ρ", "u", "v", "w", "p", "T")
 smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT")
@@ -439,10 +439,14 @@ for (i, statename) in enumerate(fmnames)
     file["firstmoment"][statename] = Array(gathermeanlist[i])
 end
 # instantaneous (don't forget to interpolate)
-gpu_components = mean_variables.(Ref(law), test_state, aux)
-for (i, statename) in enumerate(fmnames)
-    file["instantaneous"][statename] = Array(gpu_components[i])
+fmvar .= mean_variables.(Ref(law), test_state, aux)
+for (newf, oldf) in zip(meanlist, meanoldlist)
+    interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
 end
+for (i, statename) in enumerate(fmnames)
+    file["instantaneous"][statename] = Array(meanlist[i])
+end
+
 # Second moment
 for (i, statename) in enumerate(smnames)
     file["secondmoment"][statename] = Array(gathersecondlist[i])
