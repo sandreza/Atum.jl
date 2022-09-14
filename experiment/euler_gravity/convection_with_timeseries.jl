@@ -1,13 +1,8 @@
-using Atum
-using Atum.EulerGravity
-using Random
-using StaticArrays
+using Atum, Atum.EulerGravity
+using Random, StaticArrays
 using StaticArrays: SVector, MVector
-using WriteVTK
-using Statistics
-using BenchmarkTools
-using Revise
-using CUDA
+using Statistics, Revise, CUDA, ProgressBars
+using GLMakie
 
 import Atum: boundarystate, source!
 Random.seed!(12345)
@@ -16,9 +11,9 @@ const parameters = (
     R=287,
     pₒ=1e5, # get_planet_parameter(:MSLP),
     g=9.81,
-    cp = 287 / (1 - 1 / 1.4),
-    γ = 1.4,
-    cv = 287 / (1 - 1 / 1.4) - 287.0,
+    cp=287 / (1 - 1 / 1.4),
+    γ=1.4,
+    cv=287 / (1 - 1 / 1.4) - 287.0,
     T_0=0.0,
     xmax=3e3,
     ymax=3e3,
@@ -46,7 +41,7 @@ function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
 
     z = aux[3]
 
-    Q₀ = 100.0   # convective_forcing.Q₀
+    Q₀ = 100.0 /4  # convective_forcing.Q₀
     r_ℓ = 100.0  # convective_forcing.r_ℓ
     s_ℓ = 100.0  # convective_forcing.s_ℓ
     λ = 1 / 10.0 # convective_forcing.λ
@@ -93,9 +88,9 @@ end
 A = CuArray
 # A = Array
 FT = Float64 # N = 3, K = 50 looks nice
-N = 4
+N = 3
 
-K = 14
+K = 8
 vf = FluxDifferencingForm(KennedyGruberFlux())
 println("DOFs = ", (N + 1) * K, " with VF ", vf)
 
@@ -117,8 +112,6 @@ cpu_grid = brickgrid(cpu_cell, (v1d, v2d, v3d); periodic=(true, true, false))
 x⃗ = points(grid)
 println("constructing rhs")
 dg = DGSEM(; law, grid, volume_form, surface_numericalflux=RoeFlux())
-# fsdg = FluxSource(; law, grid, volume_form, surface_numericalflux=RoeFlux())
-# dg_r = DGSEM(; law, grid, volume_form, surface_numericalflux=RusanovFlux())
 
 cfl = FT(14 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 
@@ -136,24 +129,56 @@ qq = initial_condition.(Ref(law), points(grid))
 dqq = initial_condition.(Ref(law), points(grid))
 println("initial conditions")
 
-if outputvtk
-    vtkdir = joinpath("output", "gravity_euler", "convection")
-    mkpath(vtkdir)
-    pvd = paraview_collection(joinpath(vtkdir, "timesteps"))
-end
+# needs to be constructed after the grid is constructed
+include("convection_interpolate_function.jl")
 
-do_output = function (step, time, q)
-    if step % ceil(Int, timeend / 100 / dt) == 0
-        println("simulation is ", time / timeend * 100, " percent complete")
-    end
-end
+
 
 odesolver = LSRK144(dg, q, dt)
 
-tic = time()
-solve!(q, timeend, odesolver; after_step=do_output)
-outputvtk && vtk_save(pvd)
-toc = time()
-println("The time for the simulation is ", toc - tic, " seconds")
-println("which is ", (toc - tic) / 60, " minutes or ", (toc - tic)/ (60^2), " hours.")
-println(q[1])
+timeend = 90 * 60
+timeend = 1 * 60
+
+thavg_timeseries = Vector{Float64}[]
+avgwth_timeseries = Vector{Float64}[]
+thavg, wavg, ththavg, avgwth = compute_field_averages(newgrid, ξlist, elist, r, ω, q, grid)
+push!(thavg_timeseries, thavg)
+push!(avgwth_timeseries, avgwth)
+
+for i in ProgressBar(1:4 * 90)
+    solve!(q, i * timeend, odesolver)
+    thavg, wavg, ththavg, avgwth = compute_field_averages(newgrid, ξlist, elist, r, ω, q, grid)
+    push!(thavg_timeseries, thavg)
+    push!(avgwth_timeseries, avgwth)
+end
+
+begin
+    fig = Figure()
+    ax1 = Axis(fig[1, 1])
+    ax2 = Axis(fig[1, 2])
+    time_slider = Slider(fig[2, 1:2], range=2:4*90, startvalue=2, horizontal=true)
+    time_index = time_slider.value
+    field = @lift(thavg_timeseries[$time_index])
+    field2 = @lift($field[2:end] - $field[1:end-1])
+    # field2 = @lift(avgwth_timeseries[$time_index])
+    scatter!(ax1, field, zlist)
+    scatter!(ax2, field2, zlist[2:end])
+    xlims!(ax2, (-0.2, 0.2))
+    display(fig)
+end
+
+##
+maxind_t = [argmax(thavg_timeseries[2:end] - thavg_timeseries[1:end-1]) for thavg_timeseries in thavg_timeseries] # maximum slope for entrainment depth
+heat_in = (mean(thavg_timeseries[end]) - mean(thavg_timeseries[1]) ) * parameters.zmax / (4 * 90 * 60) # not 25 / 717.5
+tlist = collect(range(0, 4 * 90 * 60, length=4 * 90 + 1))
+entrainment_layer_depth = sqrt.(3 * heat_in / parameters.Δθ * parameters.zmax * tlist )
+
+begin
+mldepth_fig = Figure()
+ax1 = Axis(mldepth_fig[1, 1]; xlabel = "time in minutes", ylabel = "entrainment depth in m")
+ln = lines!(ax1, tlist  ./ 60, entrainment_layer_depth, color = :red, label = "Theoretical")
+sc = scatter!(ax1, tlist ./ 60, zlist[maxind_t], color = :blue, label = "Numerical")
+axislegend(ax1, position  = :rt)
+display(mldepth_fig)
+end
+##
