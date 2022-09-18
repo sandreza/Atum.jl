@@ -72,6 +72,7 @@ function (dg::DGSEM)(dq, q, time; increment = true)
   ndrange = (Nfp * length(grid),)
   faceix⁻, faceix⁺ = faceindices(grid)
   facenormal, _ = components(facemetrics(grid))
+
   comp_stream = surfaceterm!(device, workgroup_face)(
     dg.law,
     dq,
@@ -482,9 +483,9 @@ end
     @unroll for s in 1:Naux
       aux1[s] = auxstate[ijk, e][s]
     end
-
-    source!(law, dqijk, q1, aux1, dim, (dir,))
-
+    if dir == 1
+      source!(law, dqijk, q1, aux1, dim, (dir,))
+    end
     @synchronize
 
     ijk = i + Nq * (j - 1 + Nq * (k - 1))
