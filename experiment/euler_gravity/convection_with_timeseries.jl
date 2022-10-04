@@ -35,13 +35,14 @@ function boundarystate(law::EulerGravityLaw, n⃗, q⁻, aux⁻, _)
     SVector(ρ⁺, ρu⃗⁺..., ρe⁺), aux⁻
 end
 
+
 function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     # Extract the state
     ρ, ρu⃗, ρe = EulerGravity.unpackstate(law, state)
 
     z = aux[3]
 
-    Q₀ = 100.0 /4  # convective_forcing.Q₀
+    Q₀ = 100.0   # convective_forcing.Q₀
     r_ℓ = 100.0  # convective_forcing.r_ℓ
     s_ℓ = 100.0  # convective_forcing.s_ℓ
     λ = 1 / 10.0 # convective_forcing.λ
@@ -55,7 +56,7 @@ function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     # source[2] += λ * damping_profile * ρu⃗[1]
     # source[3] += λ * damping_profile * ρu⃗[2]
     # source[4] += λ * damping_profile * ρu⃗[3]
-    source[5] += ρ * radiation_profile
+    source[5] =  ρ * radiation_profile
 
     return nothing
 end
@@ -88,9 +89,9 @@ end
 A = CuArray
 # A = Array
 FT = Float64 # N = 3, K = 50 looks nice
-N = 3
+N = 4
 
-K = 8
+K = 12 * 2
 vf = FluxDifferencingForm(KennedyGruberFlux())
 println("DOFs = ", (N + 1) * K, " with VF ", vf)
 
@@ -132,8 +133,6 @@ println("initial conditions")
 # needs to be constructed after the grid is constructed
 include("convection_interpolate_function.jl")
 
-
-
 odesolver = LSRK144(dg, q, dt)
 
 timeend = 90 * 60
@@ -145,7 +144,8 @@ thavg, wavg, ththavg, avgwth = compute_field_averages(newgrid, ξlist, elist, r,
 push!(thavg_timeseries, thavg)
 push!(avgwth_timeseries, avgwth)
 
-for i in ProgressBar(1:4 * 90)
+numloops = 5 * 60
+for i in ProgressBar(1:numloops )
     solve!(q, i * timeend, odesolver)
     thavg, wavg, ththavg, avgwth = compute_field_averages(newgrid, ξlist, elist, r, ω, q, grid)
     push!(thavg_timeseries, thavg)
@@ -156,7 +156,7 @@ begin
     fig = Figure()
     ax1 = Axis(fig[1, 1])
     ax2 = Axis(fig[1, 2])
-    time_slider = Slider(fig[2, 1:2], range=2:4*90, startvalue=2, horizontal=true)
+    time_slider = Slider(fig[2, 1:2], range=2:numloops, startvalue=2, horizontal=true)
     time_index = time_slider.value
     field = @lift(thavg_timeseries[$time_index])
     field2 = @lift($field[2:end] - $field[1:end-1])
@@ -168,17 +168,60 @@ begin
 end
 
 ##
+M = 200
+x, y, z = components(grid.points)
+zlist = range(minimum(z), maximum(z), length=M)
+
 maxind_t = [argmax(thavg_timeseries[2:end] - thavg_timeseries[1:end-1]) for thavg_timeseries in thavg_timeseries] # maximum slope for entrainment depth
-heat_in = (mean(thavg_timeseries[end]) - mean(thavg_timeseries[1]) ) * parameters.zmax / (4 * 90 * 60) # not 25 / 717.5
-tlist = collect(range(0, 4 * 90 * 60, length=4 * 90 + 1))
-entrainment_layer_depth = sqrt.(3 * heat_in / parameters.Δθ * parameters.zmax * tlist )
+Δθt0 = mean(thavg_timeseries[end]) - mean(thavg_timeseries[1])
+heat_in = parameters.Q₀ / parameters.cp 
+heat_in2 =  (Δθt0) * parameters.zmax / (numloops  * 60) 
+println("the relative error of heat_in is ", abs(heat_in - heat_in2) / heat_in2)
+tlist = collect(range(0, odesolver.time, length=numloops  + 1))
+entrainment_layer_depth = sqrt.(3 * heat_in / parameters.Δθ * parameters.zmax * tlist)
+# the magic 3 comes from including entrainment taken from the KPP paper
+
+ρ, _, _, _, ρe = components(q)
+ρ0, _, _, _, ρe0 = components(qq)
+average_energy = sum(ρe .* dg.MJ) / sum(dg.MJ)
+average_energy0 = sum(ρe0 .* dg.MJ) / sum(dg.MJ)
+rhoavg = sum(ρ .* dg.MJ) / sum(dg.MJ)
+rhoavg0 = sum(ρ0 .* dg.MJ) / sum(dg.MJ)
+
+
+Δρe = average_energy - average_energy0
+println("Δρe = ", Δρe)
 
 begin
-mldepth_fig = Figure()
-ax1 = Axis(mldepth_fig[1, 1]; xlabel = "time in minutes", ylabel = "entrainment depth in m")
-ln = lines!(ax1, tlist  ./ 60, entrainment_layer_depth, color = :red, label = "Theoretical")
-sc = scatter!(ax1, tlist ./ 60, zlist[maxind_t], color = :blue, label = "Numerical")
-axislegend(ax1, position  = :rt)
-display(mldepth_fig)
+    mldepth_fig = Figure(resolution=(800, 600))
+    options = (; titlesize=30, ylabelsize=32,
+        xlabelsize=32, xgridstyle=:dash, ygridstyle=:dash, xtickalign=1,
+        xticksize=10, ytickalign=1, yticksize=10,
+        xticklabelsize=30, yticklabelsize=30, xlabel="time [hours]", ylabel="entrainment depth [km]")
+
+    ax1 = Axis(mldepth_fig[1, 1]; options...)
+    ylims!(ax1, (0, 3.0))
+    sc = scatter!(ax1, tlist ./ (60 * 60), zlist[maxind_t] ./ 1000, color=:blue, label="Numerical")
+    ln = lines!(ax1, tlist ./ (60 * 60), entrainment_layer_depth ./ 1000, color=:red, label="Theoretical", linewidth=3)
+    axislegend(ax1, position=:rt)
+    display(mldepth_fig)
 end
 ##
+#=
+using HDF5
+begin
+thtimesir = zeros(length(thavg_timeseries[1]), length(thavg_timeseries))
+for i in eachindex(thavg_timeseries)
+    thtimesir[:, i] .= thavg_timeseries[i]
+end
+
+filename = "mixing_layer_depth_more_rez.h5"
+fid = h5open(filename, "w")
+fid["tlist"] = tlist
+fid["zlist"] = collect(zlist)
+fid["maxind_t"] = maxind_t
+fid["entrainment_layer_depth"] = entrainment_layer_depth
+fid["average_theta"] = thtimesir
+close(fid)
+end
+=#

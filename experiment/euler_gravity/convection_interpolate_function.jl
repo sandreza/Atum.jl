@@ -3,7 +3,7 @@ include("interpolate.jl")
 r = Tuple([cpu_cell.points_1d[i][:] for i in eachindex(cpu_cell.points_1d)])
 ω = Tuple([baryweights(cpu_cell.points_1d[i][:]) for i in eachindex(cpu_cell.points_1d)])
 
-M = 64 * 2
+M = 200
 x, y, z = components(grid.points)
 xlist = range(minimum(x), maximum(x), length=M)
 ylist = range(minimum(y), maximum(y), length=M)

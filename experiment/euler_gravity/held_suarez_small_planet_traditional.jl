@@ -11,6 +11,8 @@ using CUDA
 using LinearAlgebra
 using JLD2
 using BenchmarkTools
+using ProgressBars
+using HDF5
 
 import Atum: boundarystate, source!
 
@@ -20,7 +22,7 @@ include("sphere_utils.jl")
 include("interpolate.jl")
 include("sphere_statistics_functions.jl")
 
-const X = 20.0; # small planet parmaeter
+const X = 20.0 # 20.0; # small planet parmaeter # X = 40 is interesting
 
 hs_p = (
     a=6378e3 / X,
@@ -92,8 +94,8 @@ FT = Float64
 A = CuArray
 
 Nq⃗ = (5, 5, 5)
-Kv = 9
-Kh = 10
+Kv = 9 # 10     # 4
+Kh = 10 # 12 * 2 # 18 * 2
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
@@ -206,7 +208,15 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -X * k_T * ρ * cv_d * (T - T_equil)
-    source_ρe += (ρu' * source_ρu) / ρ
+    # source_ρe += (ρu' * source_ρu) / ρ
+
+    # coriolis = (k' * coriolis) * k # shallow coriolis
+
+    Ω = @SVector [-0, -0, 2π / 86400 * X]
+    tmp = k' * Ω
+    Ω = tmp * k
+    coriolis = -2Ω × ρu
+
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -219,22 +229,26 @@ end
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
 sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(1.0))
+sf_explicit = (RoeFlux(), RoeFlux(), RoeFlux())
 
 linearized_vf = Atum.LinearizedKennedyGruberFlux()
 linearized_sf = Atum.LinearizedRefanovFlux(1.0)
 
 dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
+dg_explicit = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf_explicit)
 
-vcfl = 30.0 # 0.25
-hcfl = 0.5 # hcfl = 0.25 for a long run
-reset_cfl = 0.15 # resets the cfl when doin a long run
+vcfl = 2*1.8 # 0.25
+hcfl = 1.8 # 0.25 # hcfl = 0.25 for a long run
+reset_cfl = 1.8 # resets the cfl when doin a long run
 
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
 vdt = vcfl * Δz / c_max
 hdt = hcfl * Δx / c_max
+
+ΔΩ = minimum([Δx, Δy, Δz])
 dt = min(vdt, hdt)
 println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
@@ -295,7 +309,7 @@ gathersecondlist = copy(secondlist)
 ##
 display_skip = 50
 tic = Base.time()
-partitions = 1:endday*18*4*X# 24*3  # 1:24*endday*3 for updating every 20 minutes
+partitions = 1:endday*18*X# 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
@@ -307,12 +321,16 @@ stable_cfl = []
 
 state .= test_state
 
-
+# aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+# dg_explicit.auxstate .= aux
+#  the problem before was making sure that the aux state was correct
 for i in ProgressBar(partitions)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
-    dg_fs.auxstate .= aux
-    dg_sd.auxstate .= aux
-    odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
+    # dg_fs.auxstate .= aux
+    # dg_sd.auxstate .= aux
+    dg_explicit.auxstate .= aux
+    # odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
+    odesolver = LSRK144(dg_explicit, test_state, dt)
     end_time = 60 * 60 * 24 * endday / partitions[end]
     state .= test_state
     solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
@@ -325,7 +343,7 @@ for i in ProgressBar(partitions)
     timeend = odesolver.time
     global current_time += timeend
 
-    if statistic_save & (current_time / 86400 > 200 / X) & (i % 4 == 0)
+    if statistic_save & (current_time / 86400 > 400 / X) & (i % 4 == 0)
         println("gathering statistics at day ", current_time / 86400)
         println("The counter is at ", statistic_counter)
         global statistic_counter += 1.0
@@ -392,10 +410,10 @@ for i in ProgressBar(partitions)
                 stable_state .= test_state
                 global save_partition = i
                 global save_time = current_time
-                push!(stable_cfl, dt * c_max / Δx)
+                push!(stable_cfl, dt * c_max / ΔΩ)
             end
             if statistic_counter > 40
-                reset_dt = reset_cfl * Δx / c_max
+                reset_dt = reset_cfl * ΔΩ / c_max
                 global dt = max(reset_dt, dt)
                 println("setting  dt to ", dt)
             end
@@ -406,6 +424,20 @@ for i in ProgressBar(partitions)
 end
 
 ##
+using HDF5
+filepath = "restart_" * "TraditionalHeldSuarezStatisticsConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
+filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
+filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * ".h5"
+
+fid = h5open(filepath, "w")
+dustates = components(test_state)
+for i in eachindex(dustates)
+    fid["state_$i"] = Array(dustates[i])
+end
+close(fid)
+
+
+##
 toc = Base.time()
 println("The time for the simulation is ", toc - tic, " seconds")
 println("The time for the simulation is ", (toc - tic) / (60), " minutes")
@@ -414,12 +446,13 @@ println("The time for the simulation is ", (toc - tic) / (60 * 60), " hours")
 gathermeanlist .*= 1 / statistic_counter
 gathersecondlist .*= 1 / (statistic_counter - 1)
 
-filepath = "SmallHeldSuarezStatisticsImplicit_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
+filepath = "TraditionalSmallHeldSuarezStatisticsConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
 filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
-filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * ".jld2"
+filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * "_X_" * string(X) * ".jld2"
 
 fmnames = ("ρ", "u", "v", "w", "p", "T")
 smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT")
+
 
 file = jldopen(filepath, "a+")
 JLD2.Group(file, "instantaneous")
@@ -439,6 +472,7 @@ end
 for (i, statename) in enumerate(fmnames)
     file["instantaneous"][statename] = Array(meanlist[i])
 end
+
 # Second moment
 for (i, statename) in enumerate(smnames)
     file["secondmoment"][statename] = Array(gathersecondlist[i])
@@ -452,4 +486,3 @@ file["parameters"] = hs_p
 
 close(file)
 println("done")
-

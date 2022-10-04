@@ -116,31 +116,33 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, x⃗, state)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], state[ix_ρu⃗]..., state[ix_ρe], 9.81 * r)
 end
 
+# more stable
 function sphere_auxiliary_3(law::EulerTotalEnergyLaw, x⃗, state)
     ix_ρ, ix_ρu⃗, ix_ρe = Atum.EulerTotalEnergy.varsindices(law)
     ix_x, ix_y, ix_z, _, _, _, _ = Atum.EulerTotalEnergy.auxindices(law)
     r = sqrt(x⃗' * x⃗)
     r̂ = x⃗ ./ r
-    tmp = (I - r̂ * (r̂')) * state[ix_ρu⃗]
+    tmp = (I - r̂ * (r̂')) * state[ix_ρu⃗] # get rid of rapidly fluctuating vertical component
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], tmp..., state[ix_ρe], 9.81 * r)
 end
 
-N = 3
+N = 4
 Nq = N + 1
-Nq⃗ = (Nq, Nq, Nq)
+Nq⃗ = (Nq, Nq, Nq-2)
 dim = 3
 
 FT = Float64
 A = CuArray
 
-Kv = 15 
-Kh = 15 
+Kv = 20 # 12 
+Kh = 12 # 12 
 # N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 vert_coord = range(FT(bw_p.a), stop=FT(bw_p.a + bw_p.H), length=Kv + 1)
+# vert_coord = FT(bw_p.a) .+ [0, 1e3, 3e3, 9e3, 1.8e4, 3e4]# [0, 200.0, 500.0, 1e3, 3e3, 9e3, 1.8e4, 3e4]
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
 
@@ -241,8 +243,9 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     P = I - k * k'
 
     source_ρu = -k_v * P * ρu
+    # source_ρu = -k_v * ρu
     source_ρe = -k_T * ρ * cv_d * (T - T_equil)
-    # source_ρe += (ρu' * source_ρu) / ρ
+    source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -254,7 +257,7 @@ end
 
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf = (RoeFlux(), RoeFlux(),  Atum.RefanovFlux(1.0))
+sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(1.0))
 
 linearized_vf = Atum.LinearizedKennedyGruberFlux()
 linearized_sf = Atum.LinearizedRefanovFlux(1.0)
@@ -262,7 +265,7 @@ linearized_sf = Atum.LinearizedRefanovFlux(1.0)
 dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
-vcfl = 120.0
+vcfl = Inf
 hcfl = 0.5
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
@@ -273,11 +276,17 @@ dt = min(vdt, hdt)
 println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
+println(" the minimum grid spacing in the horizontal is ", Δx)
+println(" the minimum grid spacing in the vertical is ", Δz)
 
 
 test_state .= old_state
 stable_state .= old_state
 
+aux = sphere_auxiliary_3.(Ref(law), x⃗, test_state)
+xp = components(aux)[1]
+yp = components(aux)[2]
+zp = components(aux)[3]
 
 # test_state .= state
 endday = 30.0 * 40
@@ -286,21 +295,31 @@ tmp_ρ = components(test_state)[1]
 ##
 display_skip = 50
 tic = time()
-partitions = 1:24*endday*3
+partitions = 1:endday*36 # 24*3  # 1:24*endday*3 for updating every 20 minutes
 
-current_time = 0.0
+current_time = 0.0 # 
 save_partition = 1
 save_time = 0.0
 
 state .*= 0.0
 for i in partitions
-    aux = sphere_auxiliary.(Ref(law), x⃗, test_state)
+    aux = sphere_auxiliary_3.(Ref(law), x⃗, test_state)
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
     odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
     end_time = 60 * 60 * 24 * endday / partitions[end]
     solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
     timeend = odesolver.time
+    #=
+    local ρ, ρu, ρv, ρw, ρet = components(test_state)
+    u = ρu ./ ρ
+    v = ρv ./ ρ
+    w = ρw ./ ρ
+    uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
+    minuʳ = minimum(uʳ)
+    maxuʳ = maximum(uʳ)
+    println("extrema vertical velocity ", (minuʳ, maxuʳ))
+    =#
     if i % display_skip == 0
         println("--------")
         println("done with ", display_skip * timeend / 60, " minutes")
@@ -312,6 +331,10 @@ for i in partitions
         println("maximum x-velocity ", maximum(u))
         println("maximum y-velocity ", maximum(v))
         println("maximum z-velocity ", maximum(w))
+        uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
+        minuʳ = minimum(uʳ)
+        maxuʳ = maximum(uʳ)
+        println("extrema vertical velocity ", (minuʳ, maxuʳ))
         bw_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
         bw_density = components(test_state)[1]
         bw_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), bw_density, bw_pressure)
@@ -326,20 +349,22 @@ for i in partitions
         ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
         println("The average density of the system is ", ρ̅)
         toc = time()
-        println("The runtime for the simulation is ", (toc - tic)/60, " minutes")
+        println("The runtime for the simulation is ", (toc - tic) / 60, " minutes")
 
-        if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
+        if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1]) | isnan(ρ̅)
             println("The simulation NaNed, decreasing timestep and using stable state")
             local i = save_partition
             global current_time = save_time
             test_state .= stable_state
             global dt *= 0.9
         else
-            println("creating backup state")
-            stable_state .= test_state
-            global save_partition = i
-            global save_time = current_time
-            if current_time/86400 > 200
+            if (abs(minuʳ) + abs(maxuʳ)) < 2.0
+                println("creating backup state")
+                stable_state .= test_state
+                global save_partition = i
+                global save_time = current_time
+            end
+            if current_time / 86400 > 200
                 state .+= stable_state
             end
         end
@@ -363,7 +388,7 @@ filepath = "HeldSuarezCheck_" * "Nev" * string(Kv) * "_Neh" * string(Kv) * "_Nq"
 file = jldopen(filepath, "a+")
 JLD2.Group(file, "state")
 JLD2.Group(file, "averagedstate")
-for (i,statename) in enumerate(statenames)
+for (i, statename) in enumerate(statenames)
     file["state"][statename] = cpu_components[i]
 end
 

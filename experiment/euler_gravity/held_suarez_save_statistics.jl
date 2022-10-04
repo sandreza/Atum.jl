@@ -11,6 +11,8 @@ using CUDA
 using LinearAlgebra
 using JLD2
 using BenchmarkTools
+using ProgressBars
+using HDF5
 
 import Atum: boundarystate, source!
 
@@ -74,6 +76,7 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, hs_p, x⃗, state)
     r = sqrt(x⃗' * x⃗)
     r̂ = x⃗ ./ r
     tmp = (I - r̂ * (r̂')) * state[ix_ρu⃗] # get rid of rapidly fluctuating vertical component
+    tmp = state[ix_ρu⃗]
     ϕ = geo(hs_p, r)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], tmp..., state[ix_ρe], ϕ)
 end
@@ -87,15 +90,16 @@ FT = Float64
 A = CuArray
 
 Nq⃗ = (5, 5, 5)
-Kv = 4
-Kh = 6
+Kv = 9
+
+Kh = 10
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
-vert_coord = FT(hs_p.a) .+ (-0.5 .* (cos.(range(0, π, length=Kv + 1))) .+ 0.5) * 3e4
+# vert_coord = FT(hs_p.a) .+ (-0.5 .* (cos.(range(0, π, length=Kv + 1))) .+ 0.5) * 3e4
 
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
@@ -222,8 +226,8 @@ linearized_sf = Atum.LinearizedRefanovFlux(1.0)
 dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
 dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
-vcfl = Inf
-hcfl = 0.25 # hcfl = 0.25 for a long run
+vcfl = 60.0
+hcfl = 0.15 # 0.25 # hcfl = 0.25 for a long run
 reset_cfl = 0.15 # resets the cfl when doin a long run
 
 Δx = min_node_distance(grid, dims=1)
@@ -232,6 +236,8 @@ reset_cfl = 0.15 # resets the cfl when doin a long run
 vdt = vcfl * Δz / c_max
 hdt = hcfl * Δx / c_max
 dt = min(vdt, hdt)
+# dt = 40.0 # hard code for reproducibility
+
 println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
@@ -291,7 +297,7 @@ gathersecondlist = copy(secondlist)
 ##
 display_skip = 50
 tic = Base.time()
-partitions = 1:endday*18*4 # 24*3  # 1:24*endday*3 for updating every 20 minutes
+partitions = 1:endday*18*4# 24*3  # 1:24*endday*3 for updating every 20 minutes
 
 current_time = 0.0 # 
 save_partition = 1
@@ -303,7 +309,10 @@ stable_cfl = []
 
 state .= test_state
 
-for i in partitions
+gathermeanlist .*= false
+gathersecondlist .*= false
+
+for i in ProgressBar(partitions)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_fs.auxstate .= aux
     dg_sd.auxstate .= aux
@@ -389,11 +398,13 @@ for i in partitions
                 global save_time = current_time
                 push!(stable_cfl, dt * c_max / Δx)
             end
+            #=
             if statistic_counter > 40
                 reset_dt = reset_cfl * Δx / c_max
                 global dt = max(reset_dt, dt)
                 println("setting  dt to ", dt)
             end
+            =#
         end
         println("-----")
     end
@@ -401,6 +412,7 @@ for i in partitions
 end
 
 ##
+
 toc = Base.time()
 println("The time for the simulation is ", toc - tic, " seconds")
 println("The time for the simulation is ", (toc - tic) / (60), " minutes")
@@ -409,7 +421,7 @@ println("The time for the simulation is ", (toc - tic) / (60 * 60), " hours")
 gathermeanlist .*= 1 / statistic_counter
 gathersecondlist .*= 1 / (statistic_counter - 1)
 
-filepath = "HeldSuarezStatistics_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
+filepath = "HeldSuarezStatisticsConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
 filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
 filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * ".jld2"
 
@@ -450,3 +462,23 @@ file["parameters"] = hs_p
 close(file)
 println("done")
 
+##
+filepath = "restart_" * "HeldSuarezStatisticsConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
+filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
+filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * ".h5"
+
+fid = h5open(filepath, "w")
+dustates = components(test_state)
+for i in eachindex(dustates)
+    fid["state_$i"] = Array(dustates[i])
+end
+close(fid)
+
+
+q_A = Array(test_state)
+filepath_inst = "HeldSuarezInstaneousConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
+filepath_inst = filepath_inst * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
+filepath_inst = filepath_inst * "_Nq3_" * string(Nq⃗[3]) * ".jld2"
+file = jldopen(filepath_inst, "a+")
+file["instantaneous"] = q_A
+close(file)
