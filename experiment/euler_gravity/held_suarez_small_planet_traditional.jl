@@ -22,7 +22,7 @@ include("sphere_utils.jl")
 include("interpolate.jl")
 include("sphere_statistics_functions.jl")
 
-const X = 20.0 # 20.0; # small planet parmaeter # X = 40 is interesting
+const X = 80.0 # 20.0; # small planet parmaeter # X = 40 is interesting
 
 hs_p = (
     a=6378e3 / X,
@@ -94,8 +94,8 @@ FT = Float64
 A = CuArray
 
 Nq⃗ = (5, 5, 5)
-Kv = 9 # 10     # 4
-Kh = 10 # 12 * 2 # 18 * 2
+Kv = 8 # 10     # 4
+Kh = 24 # 12 * 2 # 18 * 2
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])

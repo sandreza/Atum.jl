@@ -8,6 +8,8 @@
 # Save files 
 *.jld2*
 *.png*
+*.h5*
+*.txt*
 
 # Ignore Outputs
 *output*

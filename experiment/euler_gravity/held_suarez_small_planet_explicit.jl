@@ -94,7 +94,7 @@ FT = Float64
 A = CuArray
 
 Nq⃗ = (5, 5, 5)
-Kv = 9 # 10     # 4
+Kv = 8 # 10     # 4
 Kh = 10 # 12 * 2 # 18 * 2
 
 law = EulerTotalEnergyLaw{FT,dim}()
@@ -270,9 +270,9 @@ endday = 30.0 * 40 / X
 tmp_ρ = components(test_state)[1]
 ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
-fmvar = mean_variables.(Ref(law), state, aux)
+fmvar = mean_variables_favre.(Ref(law), state, aux)
 fmvar .*= 0.0
-smvar = second_moment_variables.(fmvar)
+smvar = second_moment_variables_favre.(fmvar)
 
 ##
 # interpolate fields 
@@ -348,12 +348,12 @@ for i in ProgressBar(partitions)
         println("gathering statistics at day ", current_time / 86400)
         println("The counter is at ", statistic_counter)
         global statistic_counter += 1.0
-        global fmvar .= mean_variables.(Ref(law), test_state, aux)
+        global fmvar .= mean_variables_favre.(Ref(law), test_state, aux)
 
         for (newf, oldf) in zip(meanlist, meanoldlist)
             interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
         end
-        second_moment_variables2!(secondlist, meanlist)
+        second_moment_variables_favre!(secondlist, meanlist)
 
         global gathermeanlist .+= meanlist
         global gathersecondlist .+= secondlist
@@ -402,7 +402,7 @@ for i in ProgressBar(partitions)
 
             global statistic_counter = 1
             aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
-            global fmvar .= mean_variables.(Ref(law), test_state, aux)
+            global fmvar .= mean_variables_favre.(Ref(law), test_state, aux)
             global gathermeanlist .*= false
             global gathersecondlist .*= false
         else
@@ -434,14 +434,16 @@ println("The time for the simulation is ", (toc - tic) / (60 * 60), " hours")
 gathermeanlist .*= 1 / statistic_counter
 gathersecondlist .*= 1 / (statistic_counter - 1)
 
-filepath = "SmallHeldSuarezStatisticsConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
+filepath = "SmallHeldSuarezStatisticsFavre_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
 filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
 filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * "_X_" * string(X) * ".jld2"
 
-fmnames = ("ρ", "u", "v", "w", "p", "T")
-smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT")
+# fmnames = ("ρ", "u", "v", "w", "p", "T")
+# smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT")
 
-
+## Favre Names
+fmnames = ("ρ", "u", "v", "w", "p", "T", "ρu", "ρv", "ρw", "ρT")
+smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT", "ρuu", "ρvv", "ρww", "ρuv", "ρTT", "ρvT")
 file = jldopen(filepath, "a+")
 JLD2.Group(file, "instantaneous")
 JLD2.Group(file, "firstmoment")
@@ -453,7 +455,7 @@ for (i, statename) in enumerate(fmnames)
     file["firstmoment"][statename] = Array(gathermeanlist[i])
 end
 # instantaneous (don't forget to interpolate)
-fmvar .= mean_variables.(Ref(law), test_state, aux)
+fmvar .= mean_variables_favre.(Ref(law), test_state, aux)
 for (newf, oldf) in zip(meanlist, meanoldlist)
     interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
 end
