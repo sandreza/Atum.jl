@@ -1,13 +1,14 @@
 using ProgressBars
+
 function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
     ρ_m2, ρu_m2, ρv_m2, ρw_m2, ρe_m2 = y
     powa = 1 / 2
-    error_ρ = sum(abs.(ρ_m - ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
-    error_ρu = sum(abs.(ρu_m - ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
-    error_ρv = sum(abs.(ρv_m - ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
-    error_ρw = sum(abs.(ρw_m - ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
-    error_ρe = sum(abs.(ρe_m - ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
+    error_ρ = sum(abs.(ρ_m .- ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
+    error_ρu = sum(abs.(ρu_m .- ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
+    error_ρv = sum(abs.(ρv_m .- ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
+    error_ρw = sum(abs.(ρw_m .- ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
+    error_ρe = sum(abs.(ρe_m .- ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
     #=
     error_ρ = sum((sum((ρ_m - ρ_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)  ) .^2 )/ normalization[1]^2
     error_ρu = sum((sum((ρu_m - ρu_m2) .* metric, dims = 1) ./ sum(metric, dims = 1) ) .^2) / normalization[2]^2
@@ -19,7 +20,16 @@ function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     return sum(error_total)
 end
 
-totes_sim = 10 * 12 * 100000 # 100 is about 30 days
+function assign_index(markov_states, mstate1, MJ)
+    m_distances = zeros(length(markov_states))
+    Threads.@threads for j in eachindex(markov_states)
+        m_distances[j] = distance(markov_states[j], mstate1, MJ)
+    end
+    argmin(m_distances)
+end
+
+
+totes_sim = 10 * 12 * 100 * 10 * 10 # 100 is about 30 days
 current_state = Int64[]
 save_radius = []
 
@@ -32,18 +42,25 @@ for i in ProgressBar(1:totes_sim)
     end_time = time_jump * dt
     solve!(test_state, end_time, odesolver, adjust_final=false)
     candidate_state = convert_gpu_to_cpu(test_state)
-    distances = [distance(markov_state, candidate_state, MJ) for markov_state in markov_states]
+    # distances = [distance(markov_state, candidate_state, MJ) for markov_state in markov_states]
+    # push!(current_state, argmin(distances))
     # push!(save_radius, distances[1:10])
-    push!(current_state, argmin(distances))
-    if i % 10 == 0
+
+    push!(current_state, assign_index(markov_states, candidate_state, MJ))
+
+    
+    if i % 100 == 0
         println("currently at timestep ", i, " out of ", totes_sim)
         println(length(union(current_state)), " states have been revisited")
+        #=
         if length(distances) < 10
             println("current distances are ", distances)
         else
             println("current distances are ", distances[1:10])
         end
+        =#
     end
+    
 end
 
 
@@ -80,7 +97,7 @@ V⁻¹ = inv(V);
 ##
 # markov = [markov_state[2][1]/markov_state[1][1] * markov_state[2][end]/markov_state[1][end] for markov_state in reduced_markov_states]
 # time_series = [state_tuple[1+1]/state_tuple[1] * state_tuple[6+1]/state_tuple[6] for state_tuple in totes_timeseries]
-
+#=
 markov = [markov_state[3][1] for markov_state in markov_states];
 # markov2 = [markov_state[3][1] for markov_state in markov_states];
 time_series = [state_tuple[3] for state_tuple in totes_timeseries];
@@ -118,3 +135,4 @@ for ax in [ax1, ax2, ax3]
     ylims!(ax, (y_min, y_max))
 end
 display(fig)
+=#

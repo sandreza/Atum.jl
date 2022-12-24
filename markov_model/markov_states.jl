@@ -63,11 +63,11 @@ function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
     ρ_m2, ρu_m2, ρv_m2, ρw_m2, ρe_m2 = y
     powa = 1 / 2
-    error_ρ = sum(abs.(ρ_m - ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
-    error_ρu = sum(abs.(ρu_m - ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
-    error_ρv = sum(abs.(ρv_m - ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
-    error_ρw = sum(abs.(ρw_m - ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
-    error_ρe = sum(abs.(ρe_m - ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
+    error_ρ = sum(abs.(ρ_m .- ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
+    error_ρu = sum(abs.(ρu_m .- ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
+    error_ρv = sum(abs.(ρv_m .- ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
+    error_ρw = sum(abs.(ρw_m .- ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
+    error_ρe = sum(abs.(ρe_m .- ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
     #=
     error_ρ = sum((sum((ρ_m - ρ_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)  ) .^2 )/ normalization[1]^2
     error_ρu = sum((sum((ρu_m - ρu_m2) .* metric, dims = 1) ./ sum(metric, dims = 1) ) .^2) / normalization[2]^2
@@ -79,13 +79,22 @@ function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     return sum(error_total)
 end
 
+function return_distances(markov_states, candidate_state, MJ)
+    m_distances = zeros(length(markov_states))
+    Threads.@threads for j in eachindex(markov_states)
+        m_distances[j] = distance(markov_states[j], candidate_state, MJ)
+    end
+    return m_distances
+end
+
+
 
 # Check distance in a few timesteps
 totes_sim = 10000
 save_radius = []
 state .= test_state
 
-for i in 1:totes_sim
+for i in ProgressBar(1:totes_sim)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_explicit.auxstate .= aux
     odesolver = LSRK144(dg_explicit, test_state, dt)
@@ -93,10 +102,12 @@ for i in 1:totes_sim
     solve!(test_state, end_time, odesolver, adjust_final=false)
     distances = distance_gpu(test_state, state, dg_explicit)
     push!(save_radius, distances)
+    #=
     if i % 10 == 0
         println("currently at timestep ", i, " out of ", totes_sim)
         println("current distances are ", save_radius[i])
     end
+    =#
 end
 
 fig_d = Figure()
@@ -142,7 +153,7 @@ for i in ProgressBar(1:totes_sim)
     end_time = 25 * dt
     solve!(test_state, end_time, odesolver, adjust_final=false)
     candidate_state = convert_gpu_to_cpu(test_state)
-    distances = [distance(markov_state, candidate_state, MJ) for markov_state in markov_states]
+    distances = return_distances(markov_states, candidate_state, MJ)# [distance(markov_state, candidate_state, MJ) for markov_state in markov_states]
     push!(save_radius, distances)
     if all(distances .>= distance_threshold)
         push!(markov_states, candidate_state)
@@ -162,3 +173,22 @@ for i in ProgressBar(1:totes_sim)
         end
     end
 end
+
+##
+count_matrix = zeros(length(markov_states), length(markov_states));
+for i in 1:length(current_state)-1
+    count_matrix[current_state[i+1], current_state[i]] += 1
+end
+
+amount_seen = sum(count_matrix, dims = 1)[:]
+pp = reverse(sortperm(amount_seen))
+
+amount_seen[pp]
+
+# throw away states that were seen too often or too little
+lower_q = quantile(amount_seen, 0.1)
+upper_q = quantile(amount_seen, 0.9)
+filtered_seen = (amount_seen .>= lower_q) .* (amount_seen .<= upper_q)
+new_amount_seen = amount_seen[filtered_seen]
+## w/e just use this
+markov_states = markov_states[pp[5:104]]
