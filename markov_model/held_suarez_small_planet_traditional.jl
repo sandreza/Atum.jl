@@ -425,6 +425,7 @@ for i in ProgressBar(partitions)
 end
 
 ##
+#=
 using HDF5
 filepath = "restart_" * "TraditionalHeldSuarezStatisticsConsistent_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
 filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
@@ -487,3 +488,4 @@ file["parameters"] = hs_p
 
 close(file)
 println("done")
+=#

@@ -1,6 +1,6 @@
 using ProgressBars
 
-function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
+function not_distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
     ρ_m2, ρu_m2, ρv_m2, ρw_m2, ρe_m2 = y
     powa = 1 / 2
@@ -9,31 +9,80 @@ function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     error_ρv = sum(abs.(ρv_m .- ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
     error_ρw = sum(abs.(ρw_m .- ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
     error_ρe = sum(abs.(ρe_m .- ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
-    #=
-    error_ρ = sum((sum((ρ_m - ρ_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)  ) .^2 )/ normalization[1]^2
-    error_ρu = sum((sum((ρu_m - ρu_m2) .* metric, dims = 1) ./ sum(metric, dims = 1) ) .^2) / normalization[2]^2
-    error_ρv = sum(abs.(sum((ρv_m - ρv_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)) .^2) / normalization[3]^2
-    error_ρw = sum(abs.(sum((ρw_m - ρw_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)) .^2) / normalization[4]^2
-    error_ρe = sum(abs.(sum((ρe_m - ρe_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)) .^2) / normalization[5]^2
-    =#
+
     error_total = (error_ρ, error_ρu, error_ρv, error_ρw, error_ρe) .^ (1 / powa)
     return sum(error_total)
 end
 
-function assign_index(markov_states, mstate1, MJ)
+function distance1(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
+    ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
+    ρ_m2, ρu_m2, ρv_m2, ρw_m2, ρe_m2 = y
+    error_ρ = sum(abs.(ρ_m .- ρ_m2) .* metric) / sum(metric) / normalization[1]
+    error_ρu = sum(abs.(ρu_m .- ρu_m2) .* metric) / sum(metric) / normalization[2]
+    error_ρv = sum(abs.(ρv_m .- ρv_m2) .* metric) / sum(metric) / normalization[3]
+    error_ρw = sum(abs.(ρw_m .- ρw_m2) .* metric) / sum(metric) / normalization[4]
+    error_ρe = sum(abs.(ρe_m .- ρe_m2) .* metric) / sum(metric) / normalization[5]
+    error_total = (error_ρ, error_ρu, error_ρv, error_ρw, error_ρe)
+    return sum(error_total)
+end
+
+function distance2(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
+    ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
+    ρ_m2, ρu_m2, ρv_m2, ρw_m2, ρe_m2 = y
+    powa = 2
+    error_ρ = sum(abs.(ρ_m .- ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
+    error_ρu = sum(abs.(ρu_m .- ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
+    error_ρv = sum(abs.(ρv_m .- ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
+    error_ρw = sum(abs.(ρw_m .- ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
+    error_ρe = sum(abs.(ρe_m .- ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
+
+    error_total = (error_ρ, error_ρu, error_ρv, error_ρw, error_ρe) .^ (1 / powa)
+    return sum(error_total)
+end
+
+function assign_index(markov_states, candidate_state, MJ)
     m_distances = zeros(length(markov_states))
     Threads.@threads for j in eachindex(markov_states)
-        m_distances[j] = distance(markov_states[j], mstate1, MJ)
+        m_distances[j] = not_distance(markov_states[j], candidate_state, MJ)
     end
     argmin(m_distances)
 end
 
+function assign_index1(markov_states, candidate_state, MJ)
+    m_distances = zeros(length(markov_states))
+    Threads.@threads for j in eachindex(markov_states)
+        m_distances[j] = distance1(markov_states[j], candidate_state, MJ)
+    end
+    argmin(m_distances)
+end
 
-totes_sim = 10 * 12 * 100 * 10 * 10 # 100 is about 30 days
-current_state = Int64[]
-save_radius = []
+function assign_index2(markov_states, candidate_state, MJ)
+    m_distances = zeros(length(markov_states))
+    Threads.@threads for j in eachindex(markov_states)
+        m_distances[j] = distance2(markov_states[j], candidate_state, MJ)
+    end
+    argmin(m_distances)
+end
 
-time_jump = 1
+function assign_index_together(markov_states, candidate_state, MJ)
+    m_distances = zeros(length(markov_states), 3)
+    Threads.@threads for j in eachindex(markov_states)
+        m_distances[j, 1] = not_distance(markov_states[j], candidate_state, MJ)
+        m_distances[j, 2] = distance1(markov_states[j], candidate_state, MJ)
+        m_distances[j, 3] = distance2(markov_states[j], candidate_state, MJ)
+    end
+    return [argmin(m_distances[:, i]) for i in 1:3]
+end
+
+totes_sim = 10 * 12 * 100 * 10 * 10 # 100 is about 30 days for timejump = 1
+
+markov_chain_p2 = Int64[]
+markov_chain_1 = Int64[]
+markov_chain_2 = Int64[]
+
+markov_chain = []
+
+time_jump = 5 # 5 is a good compromise between speed and accuracy
 MJ = Array(dg_fs.MJ)
 for i in ProgressBar(1:totes_sim)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
@@ -42,28 +91,42 @@ for i in ProgressBar(1:totes_sim)
     end_time = time_jump * dt
     solve!(test_state, end_time, odesolver, adjust_final=false)
     candidate_state = convert_gpu_to_cpu(test_state)
-    # distances = [distance(markov_state, candidate_state, MJ) for markov_state in markov_states]
-    # push!(current_state, argmin(distances))
-    # push!(save_radius, distances[1:10])
 
-    push!(current_state, assign_index(markov_states, candidate_state, MJ))
-
-    
-    if i % 100 == 0
-        println("currently at timestep ", i, " out of ", totes_sim)
-        println(length(union(current_state)), " states have been revisited")
-        #=
-        if length(distances) < 10
-            println("current distances are ", distances)
-        else
-            println("current distances are ", distances[1:10])
-        end
-        =#
-    end
-    
+    # markov embedding
+    push!(markov_chain_p2, assign_index(markov_states, candidate_state, MJ))
+    push!(markov_chain_1, assign_index1(markov_states, candidate_state, MJ))
+    push!(markov_chain_2, assign_index2(markov_states, candidate_state, MJ))
+    # push!(markov_chain, assign_index_together(markov_states, candidate_state, MJ))
 end
 
+if length(markov_chain) > 0
+    markov_chain_p2 = [markov_chain[i][1] for i in 1:length(markov_chain)]
+    markov_chain_1 = [markov_chain[i][2] for i in 1:length(markov_chain)]
+    markov_chain_2 = [markov_chain[i][3] for i in 1:length(markov_chain)]
+end
 
+fig = Figure()
+ax11 = Axis(fig[1, 1]; title="p = 2")
+ax12 = Axis(fig[1, 2]; title="p = 1")
+ax13 = Axis(fig[1, 3]; title="p = 1/2")
+
+ax21 = Axis(fig[2, 1]; title="p = 2")
+ax22 = Axis(fig[2, 2]; title="p = 1")
+ax23 = Axis(fig[2, 3]; title="p = 1/2")
+
+scatter!(ax11, markov_chain_p2[1:500], color="red")
+scatter!(ax12, markov_chain_1[1:500], color="blue")
+scatter!(ax13, markov_chain_2[1:500], color="orange")
+
+scatter!(ax21, markov_chain_p2[end-500:end], color="red")
+scatter!(ax22, markov_chain_1[end-500:end], color="blue")
+scatter!(ax23, markov_chain_2[end-500:end], color="orange")
+
+cp2 = count_operator(markov_chain_p2)
+c1 = count_operator(markov_chain_1)
+c2 = count_operator(markov_chain_2)
+
+#=
 stragglers = setdiff(1:maximum(current_state), union(current_state))
 current_state = [current_state..., stragglers..., current_state[1]]
 count_matrix = zeros(length(markov_states), length(markov_states));
@@ -94,6 +157,7 @@ Q̂ = (perron_frobenius - I) ./ (time_jump * dt)
 Λ, V = eigen(Q̂);
 p = real.(V[:, end] ./ sum(V[:, end]));
 V⁻¹ = inv(V);
+=#
 ##
 # markov = [markov_state[2][1]/markov_state[1][1] * markov_state[2][end]/markov_state[1][end] for markov_state in reduced_markov_states]
 # time_series = [state_tuple[1+1]/state_tuple[1] * state_tuple[6+1]/state_tuple[6] for state_tuple in totes_timeseries]

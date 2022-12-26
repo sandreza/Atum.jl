@@ -87,8 +87,6 @@ function return_distances(markov_states, candidate_state, MJ)
     return m_distances
 end
 
-
-
 # Check distance in a few timesteps
 totes_sim = 10000
 save_radius = []
@@ -98,7 +96,7 @@ for i in ProgressBar(1:totes_sim)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_explicit.auxstate .= aux
     odesolver = LSRK144(dg_explicit, test_state, dt)
-    end_time = 5 * dt
+    end_time = 25 * dt
     solve!(test_state, end_time, odesolver, adjust_final=false)
     distances = distance_gpu(test_state, state, dg_explicit)
     push!(save_radius, distances)
@@ -110,6 +108,7 @@ for i in ProgressBar(1:totes_sim)
     =#
 end
 
+using GLMakie
 fig_d = Figure()
 ax1 = Axis(fig_d[1, 1])
 ax2 = Axis(fig_d[1, 2])
