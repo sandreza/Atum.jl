@@ -15,11 +15,11 @@ Random.seed!(12345)
 # for lazyness 
 const parameters = (
     R=287,
-    pₒ=1e5, # get_planet_parameter(:MSLP),
+    pₒ=1e5, 
     g=9.81,
-    cp=1e3,
-    γ=1.4,
-    cv=1e3 / 1.4,
+    cp = 1e3,
+    γ = 1.4,
+    cv = 1e3 / 1.4,
     T_0=0.0,
     xmax=3e3,
     ymax=3e3,
@@ -125,7 +125,7 @@ cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c * 1.0
 println(" the dt is ", dt)
-timeend = 60 * 6
+timeend = 60 * 60
 
 Random.seed!(1234)
 q = fieldarray(undef, law, grid)
@@ -135,7 +135,7 @@ q0 .= initial_condition.(Ref(law), points(grid))
 qq = initial_condition.(Ref(law), points(grid))
 dqq = initial_condition.(Ref(law), points(grid))
 
-aux = Atum.auxiliary.(Ref(law), x⃗, q)
+aux = Atum.auxiliary.(Ref(law), x⃗, q) # initialize with the initial condition
 fsdg.auxstate .= aux
 fsdg2.auxstate .= aux
 dg_sd.auxstate .= aux

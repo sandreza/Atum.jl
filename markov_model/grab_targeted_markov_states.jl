@@ -312,13 +312,22 @@ for i in 1:5
 end
 
 ##
+function convert_gpu_to_cpu(state)
+    return Array.(components(state))
+end
+
 # Can now run model 
 totes_sim = 1000 * 12 * 30 # * 12 * 20# 1000 is about 30 days
 time_jump = 5
 A_MJ = Array(dg_explicit.MJ)
-# observables = zeros(totes_sim, 11)
+observables = zeros(totes_sim, 11)
 T_observable = []
-for i in ProgressBar(1:totes_sim)
+regular_markov = []
+extreme_markov = [] 
+ilist = []
+push!(ilist, 0)
+
+for i in 1:totes_sim
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_explicit.auxstate .= aux
     odesolver = LSRK144(dg_explicit, test_state, dt)
@@ -327,68 +336,52 @@ for i in ProgressBar(1:totes_sim)
     state_components = components(test_state)
     observables[i, 1] = kinetic_energy(state_components, dg_explicit.MJ)
     state_components = Array.(components(test_state))
-    #=
-    for j in 1:5
-        observables[i, j+1] = sum(state_components[j] .* A_MJ, dims=1)[1] / sum(A_MJ, dims=1)[1]
-    end
-    for j in 1:5
-        observables[i, j+6] = state_components[j][1,1]
-    end
-    =#
+
     oldlist = components(mean_variables.(Ref(law), test_state, aux))
+    if i%100 == 0
+        println("finished ", i, " time steps")
+    end
+    if (i > ilist[length(ilist)] + 500) | (length(ilist) == 1)
+        if oldlist[end][1, 1] > 290
+            # candidate_state = convert_gpu_to_cpu(test_state)
+            # push!(markov_states, candidate_state)
+            push!(extreme_markov, convert_gpu_to_cpu(test_state)) 
+            println("got an extreme state! now we have ", length(extreme_markov), " extreme states") 
+            push!(ilist, i)
+        elseif (i > ilist[length(ilist)]+500) && (length(extreme_markov) > 4)
+            push!(regular_markov, convert_gpu_to_cpu(test_state))
+            println("got a regular state! now we have ", length(regular_markov), " regular states")
+            push!(ilist, i)
+        end
+        if length(regular_markov) > 94 
+            i = totes_sim
+        end
+    end
+
+
     #=
     newlist = [A(zeros(size(xlist))) for i in 1:length(oldlist)]
     for (newf, oldf) in zip(newlist, oldlist)
         interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
     end
     =#
-    push!(T_observable, oldlist[end][1,1])
+    push!(T_observable, oldlist[end][1, 1])
     # push!(T_observable, Array(newlist[end])[:,:,1])
     # candidate_state = convert_gpu_to_cpu(test_state)
 end
+
 ##
-#=
-function pressure(law::EulerTotalEnergyLaw, state, aux)
-ρ, ρu⃗, ρe = unpackstate(law, state)
-Φ = geopotential(law, aux)
-γ = constants(law).γ
-return (γ - 1) * (ρe - ρu⃗' * ρu⃗ / 2ρ - ρ * Φ)
+geopot = Array(components(aux)[end])
+function temperature_from_markov(markov_state, geopot)
+    ρ = markov_state[1]
+    ρu = markov_state[2]
+    ρv = markov_state[3]
+    ρw = markov_state[4]
+    ρe = markov_state[5]
+    γ = 1.4
+    R_d = 287
+    p = (γ - 1) * (ρe .- 0.5 * (ρu .* ρu .+ ρv .* ρv .+ ρw .* ρw) ./ ρ .- ρ .* geopot)
+    return p ./ (ρ * R_d)
 end
-=#
-#=
-current_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
-geopotential_array = Atum.EulerTotalEnergy.geopotential.(Ref(law), aux)
-current_ρ =  components(test_state)[1]
-current_temperature = current_pressure ./  ( hs_p.R_d .* current_ρ)
-T_A = Array(current_temperature)
-Φ_A = Array(geopotential_array)
-p_A = Array(current_pressure)
-=#
-##
-#=
-using UnicodePlots
-lineplot(observables[:, 5])
 
-indexchoice = 8
-g⃗_t = observables[1:end, indexchoice]
-μ = mean(g⃗_t)
-
-timesteps = 2000
-autocor = zeros(timesteps)
-for i in 1:timesteps
-    autocor[i] = mean(g⃗_t[i:end] .* g⃗_t[1:end-i+1]) / μ^2 - 1
-end
-=#
-##
-
-#=
-filename = "observables_test_2.h5"
-fid = h5open(filename, "w")
-fid["observables"] = observables
-fid["dt"] = time_jump * dt
-fid["MJ"] = A_MJ
-close(fid)
-=#
-
-
-
+markov_states = [extreme_markov[1:10]..., regular_markov[1:90]...]

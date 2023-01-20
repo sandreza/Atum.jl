@@ -1,4 +1,13 @@
-using ProgressBars
+using ProgressBars, HDF5
+
+filename = "part3_markov_model_even_time_nstate_" * string(length(markov_states)) * ".h5"
+fid = h5open(filename, "w")
+markov_array = zeros(size(markov_states[1][1])..., 5)
+save_ic = convert_gpu_to_cpu(test_state)
+for j in 1:5
+    markov_array[:, :, j] .= save_ic[j]
+end
+fid["initial condition"] = markov_array
 
 function not_distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
@@ -93,8 +102,8 @@ for i in ProgressBar(1:totes_sim)
     candidate_state = convert_gpu_to_cpu(test_state)
 
     # markov embedding
-    push!(markov_chain_p2, assign_index(markov_states, candidate_state, MJ))
-    push!(markov_chain_1, assign_index1(markov_states, candidate_state, MJ))
+    # push!(markov_chain_p2, assign_index(markov_states, candidate_state, MJ))
+    # push!(markov_chain_1, assign_index1(markov_states, candidate_state, MJ))
     push!(markov_chain_2, assign_index2(markov_states, candidate_state, MJ))
     # push!(markov_chain, assign_index_together(markov_states, candidate_state, MJ))
 end
@@ -105,6 +114,22 @@ if length(markov_chain) > 0
     markov_chain_2 = [markov_chain[i][3] for i in 1:length(markov_chain)]
 end
 
+# memo to self. Record initial condition and the final condition. [DONE]
+save_fc = convert_gpu_to_cpu(test_state)
+for j in 1:5
+    markov_array[:, :, j] .= save_fc[j]
+end
+fid["final condition"] = markov_array
+fid["markov embedding 0p5"] = markov_chain_p2
+fid["markov embedding 1"] = markov_chain_1
+fid["markov embedding 2"] = markov_chain_2
+fid["time jump "] = time_jump
+fid["dt"] = dt
+fid["small planet factor"] = X
+close(fid)
+
+
+#=
 fig = Figure()
 ax11 = Axis(fig[1, 1]; title="p = 2")
 ax12 = Axis(fig[1, 2]; title="p = 1")
@@ -126,6 +151,19 @@ cp2 = count_operator(markov_chain_p2)
 c1 = count_operator(markov_chain_1)
 c2 = count_operator(markov_chain_2)
 
+pf_p2 = cp2 ./ sum(cp2, dims=1)
+pf_1 = c1 ./ sum(c1, dims=1)
+pf_2 = c2 ./ sum(c2, dims=1)
+
+scp2 = [sum(markov_chain_p2 .== i)/length(markov_chain_1) for i in eachindex(markov_states)]
+sc1 = [sum(markov_chain_1 .== i)/length(markov_chain_1) for i in eachindex(markov_states)]
+sc2 = [sum(markov_chain_2 .== i) / length(markov_chain_1) for i in eachindex(markov_states)]
+
+for steady_distribution in [scp2, sc1, sc2]
+    entropy = -sum(steady_distribution .* log.(steady_distribution)) / log(length(markov_states))
+    println("The entropy is $entropy")
+end
+=#
 #=
 stragglers = setdiff(1:maximum(current_state), union(current_state))
 current_state = [current_state..., stragglers..., current_state[1]]

@@ -63,11 +63,11 @@ function distance(x, y, metric; normalization=(1.3, 60.0, 60.0, 60.0, 2.3e6))
     ρ_m, ρu_m, ρv_m, ρw_m, ρe_m = x
     ρ_m2, ρu_m2, ρv_m2, ρw_m2, ρe_m2 = y
     powa = 1 / 2
-    error_ρ = sum(abs.(ρ_m - ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
-    error_ρu = sum(abs.(ρu_m - ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
-    error_ρv = sum(abs.(ρv_m - ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
-    error_ρw = sum(abs.(ρw_m - ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
-    error_ρe = sum(abs.(ρe_m - ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
+    error_ρ = sum(abs.(ρ_m .- ρ_m2) .^ powa .* metric) / sum(metric) / normalization[1]^powa
+    error_ρu = sum(abs.(ρu_m .- ρu_m2) .^ powa .* metric) / sum(metric) / normalization[2]^powa
+    error_ρv = sum(abs.(ρv_m .- ρv_m2) .^ powa .* metric) / sum(metric) / normalization[3]^powa
+    error_ρw = sum(abs.(ρw_m .- ρw_m2) .^ powa .* metric) / sum(metric) / normalization[4]^powa
+    error_ρe = sum(abs.(ρe_m .- ρe_m2) .^ powa .* metric) / sum(metric) / normalization[5]^powa
     #=
     error_ρ = sum((sum((ρ_m - ρ_m2) .* metric, dims = 1) ./ sum(metric, dims = 1)  ) .^2 )/ normalization[1]^2
     error_ρu = sum((sum((ρu_m - ρu_m2) .* metric, dims = 1) ./ sum(metric, dims = 1) ) .^2) / normalization[2]^2
@@ -81,9 +81,10 @@ end
 
 
 # Check distance in a few timesteps
-totes_sim = 2000
+totes_sim = 10000
 save_radius = []
 state .= test_state
+
 for i in 1:totes_sim
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_explicit.auxstate .= aux
@@ -119,7 +120,7 @@ lines!(ax5, r5)
 lines!(ax6, r6)
 
 hist(r6[1000:end], bins=100)
-distance_threshold = quantile(r6[1000:end], 0.1)
+distance_threshold = quantile(r6[1000:end], 0.05)
 # once in statistically steady state evolve for a bit 
 # choose threshold for quantiles as a distance, 0.18 seems legit
 
@@ -134,7 +135,7 @@ push!(markov_states, convert_gpu_to_cpu(test_state))
 push!(states_in_time, 1)
 
 MJ = Array(dg_fs.MJ)
-for i in 1:totes_sim
+for i in ProgressBar(1:totes_sim)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_explicit.auxstate .= aux
     odesolver = LSRK144(dg_explicit, test_state, dt)
@@ -180,13 +181,14 @@ end
 perron_frobenius = count_matrix ./ sum(count_matrix, dims=1)
 ll, vv = eigen(perron_frobenius)
 p = real.(vv[:, end] / sum(vv[:, end]))
-println("The entropy is ", -sum(p .* log.(p) ./ log(length(p))))
+entropy = -sum(p .* log.(p) ./ log(length(p)))
+println("The entropy is ", entropy)
 λₜ = real.(1 / (log(ll[end-1]) / (25 * dt)) * X / 86400)
 println("the slowest decaying statistical scale is ", λₜ, " days")
 
-Q = transition_rate_matrix(current_state, length(union(current_state)); γ= 25 * dt);
+Q = (perron_frobenius - I) ./ (25 * dt) # quick guess
 Λ, V = eigen(Q);
 p = real.(V[:, end] ./ sum(V[:, end]));
 V⁻¹ = inv(V);
-λₜ = real.(1 / real(Λ[end-1])) * X / 86400)
+λₜ = real.(1 / real(Λ[end-1])) * X / 86400
 println("the slowest decaying statistical scale is ", λₜ, " days")

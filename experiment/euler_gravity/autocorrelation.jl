@@ -89,9 +89,9 @@ println("the largest decaying mode is ", 1/real(Λ[end-1]) * X / 86400, " days")
 auto_timeseries = zeros(totes)
 
 for s in 0:totes-1
-    @inbounds auto_timeseries[s+1] = mean(timeseries[1:end-s] .* timeseries[s+1:end]) 
+    @inbounds auto_timeseries[s+1] = mean(time_series[1:end-s] .* time_series[s+1:end]) 
 end
-auto_timeseries .= auto_timeseries  .- mean(timeseries) .^ 2
+auto_timeseries .= auto_timeseries  .- mean(time_series) .^ 2
 ##
 times = Float64[]
 for i in 0:1:totes-1

@@ -3,6 +3,7 @@ u_timeseries = []
 T_timeseries = []
 v_timeseries = []
 rho_timeseries = []
+w_timeseries = []
 u = Array(meanlist[2][:, :, 2])
 for i in 1:totes_sim
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
@@ -36,6 +37,12 @@ for i in 1:totes_sim
     interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
     ρ = Array(newf[:, :, 2])
     push!(rho_timeseries, ρ)
+    # save w
+    oldf = components(fmvar)[4]
+    newf = meanlist[4]
+    interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
+    w = Array(newf[:, :, 2])
+    push!(w_timeseries, w)
 
     if i % 10 == 0
         println("currently at timestep ", i, " out of ", totes_sim)
@@ -75,7 +82,7 @@ rotate_cam!(ax.scene, rotation)
 
 ##
 using HDF5
-filename = "high_rez_hs.h5"
+filename = "even_high_rez_hs.h5"
 fid = h5open(filename, "w")
 create_group(fid, "T")
 create_group(fid, "rho")

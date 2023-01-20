@@ -1,24 +1,27 @@
-using Atum, Atum.EulerTotalEnergy
-using Random, StaticArrays
+using Atum
+using Atum.EulerTotalEnergy
+using Random
+using StaticArrays
 using StaticArrays: SVector, MVector
-using WriteVTK, Statistics
-using BenchmarkTools, Revise
+using WriteVTK
+using Statistics
+using BenchmarkTools
+using Revise
 using CUDA
-using LinearAlgebra, ProgressBars, HDF5
+using LinearAlgebra
+using JLD2
+using BenchmarkTools
+
 import Atum: boundarystate, source!
 
 statistic_save = true
 
-include(pwd() * "/experiment/euler_gravity/sphere_utils.jl")
-include(pwd() * "/experiment/euler_gravity/interpolate.jl")
-include(pwd() * "/experiment/euler_gravity/sphere_statistics_functions.jl")
-
-# CURRENTLY DAMPING EVERYTHING
-const X = 80.0 # 20.0; # small planet parmaeter # X = 40 is interesting, X = 80 is stil good
+include("sphere_utils.jl")
+include("sphere_statistics_functions.jl")
 
 hs_p = (
-    a=6378e3 / X,
-    Ω=2π / 86400 * X,
+    a=6378e3,
+    Ω=2π / 86400,
     g=9.81,
     R_d=287.0,
     γ=1.4,
@@ -42,11 +45,8 @@ uʳᵃᵈ(hs_p, λ, ϕ, r) = 0.0
 
 # the reference value for the geopotential doesn't matter, but is here so that 
 # it can relate to the shallow geopoential g * r
-# we want the linearization to still be 9.81 * r
-#  (r - a + a)⁻¹ = 1/a - (r-a)/a²
-# 2/a - (r - a + a)⁻¹ = r / a^2
-geo(hs_p, r) = (2 * hs_p.gravc * hs_p.mearth / hs_p.a - hs_p.gravc * hs_p.mearth / r) / X^2
-# rhoish(hs_p, λ, ϕ, r) = hs_p.ρₛ * exp(-(10 * r - 10 * hs_p.a)) / (hs_p.R_d * hs_p.Tₛ))
+geo(hs_p, r) = 2 * hs_p.gravc * hs_p.mearth / hs_p.a - hs_p.gravc * hs_p.mearth / r
+
 ρ₀(hs_p, λ, ϕ, r) = hs_p.ρₛ * exp(-(geo(hs_p, r) - geo(hs_p, hs_p.a)) / (hs_p.R_d * hs_p.Tₛ))
 ρuˡᵒⁿ(hs_p, λ, ϕ, r) = ρ₀(hs_p, λ, ϕ, r) * uˡᵒⁿ(hs_p, λ, ϕ, r)
 ρuˡᵃᵗ(hs_p, λ, ϕ, r) = ρ₀(hs_p, λ, ϕ, r) * uˡᵃᵗ(hs_p, λ, ϕ, r)
@@ -66,6 +66,8 @@ e_pot(hs_p, λ, ϕ, r) = geo(hs_p, r)
                        + ρuˡᵒⁿ(hs_p, lon(x...), lat(x...), rad(x...)) * λ̂(x...))
 ρe₀ᶜᵃʳᵗ(hs_p, x...) = ρe(hs_p, lon(x...), lat(x...), rad(x...))
 
+
+
 # correction auxstate for sphere
 function sphere_auxiliary(law::EulerTotalEnergyLaw, hs_p, x⃗, state)
     ix_ρ, ix_ρu⃗, ix_ρe = Atum.EulerTotalEnergy.varsindices(law)
@@ -77,7 +79,7 @@ function sphere_auxiliary(law::EulerTotalEnergyLaw, hs_p, x⃗, state)
     @inbounds SVector(x⃗[ix_x], x⃗[ix_y], x⃗[ix_z], state[ix_ρ], tmp..., state[ix_ρe], ϕ)
 end
 
-N = 5
+N = 3
 Nq = N + 1
 Nq⃗ = (Nq, Nq, Nq)
 dim = 3
@@ -85,15 +87,20 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Nq⃗ = (7, 7, 7)
-Kv = 4 # 10     # 4
-Kh = 6 # 12 * 2 # 18 * 2
+Kv = 15 # 12 
+Kh = 15 # 12 
+# N = 4, Kv = 12, Kh = 12 for paper resolution
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
 cpu_cell = LobattoCell{FT,Array}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
-
 vert_coord = range(FT(hs_p.a), stop=FT(hs_p.a + hs_p.H), length=Kv + 1)
+# vert_coord = FT(hs_p.a) .+ [0, 2e3, 5e3, 1e4, 1.5e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, 1.75e3, 4.5e3, 7.25e3, 1.1e4, 1.5e4, 2.25e4, 3e4]
+# plevels = range(1e5 * exp(-3e4 / 8e3), 1e5, length=Kv+1)
+# vert_coord = FT(hs_p.a) .+ reverse(@. -log(plevels / 1e5) * 8e3)
+# vert_coord = FT(hs_p.a) .+ [0, 1e3, 3e3, 6e3, 9e3, 1.2e4, 1.5e4, 1.8e4, 2.1e4, 2.4e4, 2.7e4, 3e4]
+# vert_coord = FT(hs_p.a) .+ [0, range(1e3, 2e4, length=Kv-4)[1:end-1]..., range(2e4, 3e4, length=5)...]
 
 grid = cubedspheregrid(cell, vert_coord, Kh)
 x⃗ = points(grid)
@@ -112,6 +119,7 @@ function held_suarez_init(x⃗, param)
     SVector(hs_ρ, hs_ρu⃗..., hs_ρe)
 end
 
+
 state = fieldarray(undef, law, grid)
 test_state = fieldarray(undef, law, grid)
 stable_state = fieldarray(undef, law, grid)
@@ -123,7 +131,6 @@ cpu_components = components(cpu_state)
 for i in eachindex(gpu_components)
     gpu_components[i] .= A(cpu_components[i])
 end
-
 # state .= held_suarez_init.(x⃗, Ref(hs_p)) # this line gives the error
 test_state .= state
 old_state .= state
@@ -133,11 +140,11 @@ hs_density = components(state)[1]
 hs_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), hs_density, hs_pressure)
 c_max = maximum(hs_soundspeed)
 
+
 function boundarystate(law::EulerTotalEnergyLaw, n⃗, q⁻, aux⁻, _)
     ρ⁻, ρu⃗⁻, ρe⁻ = EulerTotalEnergy.unpackstate(law, q⁻)
     ρ⁺, ρe⁺ = ρ⁻, ρe⁻
-    ρu⃗⁺ = ρu⃗⁻ - 2 * (n⃗' * ρu⃗⁻) * n⃗ # free-slip
-    # ρu⃗⁺ = - ρu⃗⁻ # no-slip
+    ρu⃗⁺ = ρu⃗⁻ - 2 * (n⃗' * ρu⃗⁻) * n⃗
     SVector(ρ⁺, ρu⃗⁺..., ρe⁺), aux⁻
 end
 
@@ -149,7 +156,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     FT = Float64
 
     # First Coriolis 
-    Ω = @SVector [-0, -0, 2π / 86400 * X]
+    Ω = @SVector [-0, -0, 2π / 86400]
     coriolis = -2Ω × ρu
 
     # Then Held-Suarez Forcing 
@@ -189,26 +196,14 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     k_T = k_a + (k_s - k_a) * height_factor * cos(φ) * cos(φ) * cos(φ) * cos(φ)
     k_v = k_f * height_factor
 
-    # sponge top 
-    # Htop = 6378e3 + 3e4
-    # top_sponge = k_f * exp(-(Htop - z)/2e3) * 3 # only tried with /1e3 
-
     # horizontal projection option
     k = coord / norm(coord)
     P = I - k * k' # technically should project out pressure normal
-    source_ρu = -X * k_v * P * ρu # - top_sponge * ρu
+    source_ρu = -k_v * P * ρu
 
-    # source_ρu = -X * k_v * ρu # damping everything is consistent with hydrostatic balance
-    source_ρe = -X * k_T * ρ * cv_d * (T - T_equil)
-    # source_ρe += (ρu' * source_ρu) / ρ
-
-    # coriolis = (k' * coriolis) * k # shallow coriolis
-
-    Ω = @SVector [-0, -0, 2π / 86400 * X]
-    tmp = k' * Ω
-    Ω = tmp * k
-    coriolis = -2Ω × ρu
-
+    # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
+    source_ρe = -k_T * ρ * cv_d * (T - T_equil)
+    source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -218,28 +213,30 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     return nothing
 end
 
+
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf_explicit = (RoeFlux(), RoeFlux(), RoeFlux())
+sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(1.0))
 
-dg_explicit = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf_explicit)
+linearized_vf = Atum.LinearizedKennedyGruberFlux()
+linearized_sf = Atum.LinearizedRefanovFlux(1.0)
 
-vcfl = 2 * 1.8 # 0.25
-hcfl = 1.8 # 0.25 # hcfl = 0.25 for a long run
-reset_cfl = 1.8 # resets the cfl when doin a long run
+dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
+dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 
+vcfl = Inf
+hcfl = 0.3 # hcfl = 0.2 for a long run
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
 vdt = vcfl * Δz / c_max
 hdt = hcfl * Δx / c_max
-
-ΔΩ = minimum([Δx, Δy, Δz])
 dt = min(vdt, hdt)
 println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
 println(" the horizontal cfl is ", dt * c_max / Δx)
 println(" the minimum grid spacing in the horizontal is ", Δx)
 println(" the minimum grid spacing in the vertical is ", Δz)
+
 
 test_state .= old_state
 stable_state .= old_state
@@ -250,145 +247,14 @@ yp = components(aux)[2]
 zp = components(aux)[3]
 
 # test_state .= state
-endday = 30.0 * 40 / X
+endday = 30.0 * 40
 tmp_ρ = components(test_state)[1]
-ρ̅_start = sum(tmp_ρ .* dg_explicit.MJ) / sum(dg_explicit.MJ)
+ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+
 
 fmvar = mean_variables.(Ref(law), state, aux)
-fmvar .*= 0.0
 smvar = second_moment_variables.(fmvar)
+fmvartmp = mean_variables.(Ref(law), state, aux)
 
-##
-# interpolate fields 
-println("precomputing interpolation data")
-scale = 4
-rlist = range(vert_coord[1] + 000, vert_coord[end], length=15 * scale)
-θlist = range(-π, π, length=90 * scale)
-ϕlist = range(0, π, length=45 * scale)
-
-xlist = [sphericaltocartesian(θ, ϕ, r) for θ in θlist, ϕ in ϕlist, r in rlist]
-
-elist = zeros(Int, length(xlist))
-ξlist = [SVector(0.0, 0.0, 0.0) for i in eachindex(xlist)]
-for kk in eachindex(xlist)
-    x = xlist[kk]
-    (x̂, cell_coords) = Bennu.cubedspherereference(x, vert_coord, Kh)
-    elist[kk] = cube_single_element_index(cell_coords, Kv, Kh)
-    ξlist[kk] = SVector(x̂)
-end
-println("done precomputing interpolation data")
-d_elist = A(elist)
-d_ξlist = A(ξlist)
-r = Tuple([cell.points_1d[i][:] for i in eachindex(cell.points_1d)])
-ω = Tuple([A(baryweights(cell.points_1d[i][:])) for i in eachindex(cell.points_1d)])
-
-oldlist = components(test_state)
-
-meanoldlist = components(fmvar)
-secondoldlist = components(smvar)
-meanlist = [A(zeros(size(xlist))) for i in 1:length(meanoldlist)]
-secondlist = [A(zeros(size(xlist))) for i in 1:length(secondoldlist)]
-gathermeanlist = copy(meanlist)
-gathersecondlist = copy(secondlist)
-##
-function kinetic_energy(state_components, MJ)
-    ρu = state_components[2]
-    ρv = state_components[3]
-    ρw = state_components[4]
-    ρ = state_components[1]
-    ke = 0.5 * sum((ρu .* ρu .+ ρv .* ρv .+ ρw .* ρw) .* MJ ./ ρ) / sum(MJ)
-    return return ke
-end
-
-##
-# load markov chain 
-filename = "markov_model_even_time_nstate_" * string(100) * ".h5"
-fid = h5open(filename, "r")
-markov_array = read(fid["markov state "*string(100)])
-close(fid)
-state_components = components(test_state)
-for i in 1:5
-    state_components[i] .= CuArray(markov_array[:, :, i])
-end
-
-##
-# Can now run model 
-totes_sim = 1000 * 12 * 30 # * 12 * 20# 1000 is about 30 days
-time_jump = 5
-A_MJ = Array(dg_explicit.MJ)
-# observables = zeros(totes_sim, 11)
-T_observable = []
-for i in ProgressBar(1:totes_sim)
-    aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
-    dg_explicit.auxstate .= aux
-    odesolver = LSRK144(dg_explicit, test_state, dt)
-    end_time = time_jump * dt
-    solve!(test_state, end_time, odesolver, adjust_final=false)
-    state_components = components(test_state)
-    observables[i, 1] = kinetic_energy(state_components, dg_explicit.MJ)
-    state_components = Array.(components(test_state))
-    #=
-    for j in 1:5
-        observables[i, j+1] = sum(state_components[j] .* A_MJ, dims=1)[1] / sum(A_MJ, dims=1)[1]
-    end
-    for j in 1:5
-        observables[i, j+6] = state_components[j][1,1]
-    end
-    =#
-    oldlist = components(mean_variables.(Ref(law), test_state, aux))
-    #=
-    newlist = [A(zeros(size(xlist))) for i in 1:length(oldlist)]
-    for (newf, oldf) in zip(newlist, oldlist)
-        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
-    end
-    =#
-    push!(T_observable, oldlist[end][1,1])
-    # push!(T_observable, Array(newlist[end])[:,:,1])
-    # candidate_state = convert_gpu_to_cpu(test_state)
-end
-##
-#=
-function pressure(law::EulerTotalEnergyLaw, state, aux)
-ρ, ρu⃗, ρe = unpackstate(law, state)
-Φ = geopotential(law, aux)
-γ = constants(law).γ
-return (γ - 1) * (ρe - ρu⃗' * ρu⃗ / 2ρ - ρ * Φ)
-end
-=#
-#=
-current_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
-geopotential_array = Atum.EulerTotalEnergy.geopotential.(Ref(law), aux)
-current_ρ =  components(test_state)[1]
-current_temperature = current_pressure ./  ( hs_p.R_d .* current_ρ)
-T_A = Array(current_temperature)
-Φ_A = Array(geopotential_array)
-p_A = Array(current_pressure)
-=#
-##
-#=
-using UnicodePlots
-lineplot(observables[:, 5])
-
-indexchoice = 8
-g⃗_t = observables[1:end, indexchoice]
-μ = mean(g⃗_t)
-
-timesteps = 2000
-autocor = zeros(timesteps)
-for i in 1:timesteps
-    autocor[i] = mean(g⃗_t[i:end] .* g⃗_t[1:end-i+1]) / μ^2 - 1
-end
-=#
-##
-
-#=
-filename = "observables_test_2.h5"
-fid = h5open(filename, "w")
-fid["observables"] = observables
-fid["dt"] = time_jump * dt
-fid["MJ"] = A_MJ
-close(fid)
-=#
-
-
-
+fmvar .*= 0.0
+smvar .*= 0.0

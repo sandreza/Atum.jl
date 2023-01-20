@@ -8,7 +8,7 @@ end
 totes_sim = 2000
 totes_timeseries = []
 state .= test_state
-push!(timeseries, reaction_coordinate(state))
+push!(totes_timeseries, spot_check(state))
 for i in 1:totes_sim
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
     dg_explicit.auxstate .= aux
@@ -23,12 +23,12 @@ end
 ##
 
 # 1.21, 0.00048781
-markov = [markov_state[3][1] for markov_state in markov_states[1:length(p)]]
-timeseries = [state_tuple[3] for state_tuple in totes_timeseries]
+markov = [markov_state[1][1] for markov_state in markov_states[1:length(p)]]
+time_series = [state_tuple[1] for state_tuple in totes_timeseries]
 ensemble_mean = sum(p .* markov)
-temporal_mean = mean(timeseries)
+temporal_mean = mean(time_series)
 ensemble_variance = sum(p .* markov .^ 2) - sum(p .* markov)^2
-temporal_variance = mean(timeseries .^ 2) - mean(timeseries)^2
+temporal_variance = mean(time_series .^ 2) - mean(time_series)^2
 println("The ensemble mean is ", ensemble_mean)
 println("The temporal mean is ", temporal_mean)
 println("The mean markov state is ", mean(markov))
@@ -39,8 +39,8 @@ println("The absolute error between the ensemble and temporal means is ", abs(en
 println("The relative error between the ensemble and temporal variances are ", 100 * abs(ensemble_variance - temporal_variance) / temporal_variance, " percent")
 
 ##
-xs_m, ys_m = histogram2(markov, normalization=p, bins=20, custom_range=extrema(timeseries))
-xs_t, ys_t = histogram2(timeseries, bins=20, custom_range=extrema(timeseries))
+xs_m, ys_m = histogram2(markov, normalization=p, bins=20, custom_range=extrema(time_series))
+xs_t, ys_t = histogram2(time_series, bins=20, custom_range=extrema(time_series))
 fig = Figure()
 ax1 = Axis(fig[1, 1]; title="Ensemble Statistics")
 ax2 = Axis(fig[1, 2]; title="Temporal Statistics")

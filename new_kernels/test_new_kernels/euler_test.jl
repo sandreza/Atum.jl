@@ -164,7 +164,7 @@ A = CuArray
 FT = Float64
 N = 3
 
-K = 4 * 4 * 2
+K = 50
 vf = FluxDifferencingForm(KennedyGruberFlux())
 println("DOFs per direction = ", (N + 1) * K, " with VF ", vf)
 
@@ -191,14 +191,14 @@ cfl = 1.8 # FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 c = 330.0 # [m/s]
 dt = cfl * min_node_distance(grid) / c * 1.0
 println(" the dt is ", dt)
-timeend = 30 #
+timeend = 10 #
 
 q = fieldarray(undef, law, grid)
 q0 = fieldarray(undef, law, grid)
-q .= initial_condition.(Ref(law), points(grid))
-q0 .= initial_condition.(Ref(law), points(grid))
-qq = initial_condition.(Ref(law), points(grid))
-dqq = initial_condition.(Ref(law), points(grid))
+q .= initial_condition.(Ref(law), points(grid));
+q0 .= initial_condition.(Ref(law), points(grid));
+qq = initial_condition.(Ref(law), points(grid));
+dqq = initial_condition.(Ref(law), points(grid));
 
 do_output = function (step, time, q)
     if step % ceil(Int, timeend / 100 / dt) == 0
@@ -245,9 +245,7 @@ solve!(q, timeend, odesolver_new) # ; after_step=do_output)
 toc = Base.time()
 println("The time for the new simulation is ", toc - tic)
 
-
 println(q[1])
-
 
 ##
 # Test Volume Flux 
@@ -329,10 +327,10 @@ q4 .= initial_condition.(Ref(law), points(grid));
 
 
 
-volume_form = FluxDifferencingForm(EntropyConservativeFlux())
-dg = DGSEM(; law, grid, volume_form=FluxDifferencingForm(KennedyGruberFlux()), surface_numericalflux=RoeFlux())
-fsdg = FluxSource(; law=EulerTotalEnergyLaw{FT,3}(), grid, volume_form=KennedyGruberFlux(), surface_numericalflux=RoeFlux(), auxstate=dg.auxstate)
-new_dg = ModifiedFluxDifferencing(; law=DryTotalEnergyLaw{FT,3}(), grid, volume_form=KennedyGruberFlux(), surface_numericalflux=RoeFlux(), auxstate=dg.auxstate)
+volume_form = FluxDifferencingForm(EntropyConservativeFlux());
+dg = DGSEM(; law, grid, volume_form=FluxDifferencingForm(KennedyGruberFlux()), surface_numericalflux=RoeFlux());
+fsdg = FluxSource(; law=EulerTotalEnergyLaw{FT,3}(), grid, volume_form=KennedyGruberFlux(), surface_numericalflux=RoeFlux(), auxstate=dg.auxstate);
+new_dg = ModifiedFluxDifferencing(; law=DryTotalEnergyLaw{FT,3}(), grid, volume_form=KennedyGruberFlux(), surface_numericalflux=RoeFlux(), auxstate=dg.auxstate);
 
 dg(q2, q1, 0.0, increment=false)
 fsdg(q3, q1, 0.0, increment=false)

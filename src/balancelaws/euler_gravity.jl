@@ -135,8 +135,11 @@ module EulerGravity
   function Atum.surfaceflux(::Atum.RoeFlux, law::EulerGravityLaw, n⃗, q⁻, aux⁻, q⁺, aux⁺)
     Φ = geopotential(law, aux⁻)
 
-    f⁻ = Atum.flux(law, q⁻, aux⁻)
-    f⁺ = Atum.flux(law, q⁺, aux⁺)
+    # f⁻ = Atum.flux(law, q⁻, aux⁻)
+    # f⁺ = Atum.flux(law, q⁺, aux⁺)
+    # base_flux = (f⁻ + f⁺)' * n⃗ / 2
+    f = Atum.twopointflux(Atum.KennedyGruberFlux(), law, q⁻, aux⁻, q⁺, aux⁺)
+    base_flux = f' * n⃗ # n⃗ / 2
 
     ρ⁻, ρu⃗⁻, ρe⁻ = unpackstate(law, q⁻)
     u⃗⁻ = ρu⃗⁻ / ρ⁻
@@ -180,7 +183,7 @@ module EulerGravity
              w3 * (u⃗' * u⃗ / 2 + Φ) +
              w4 * (u⃗' * Δu⃗ - uₙ * Δuₙ)) / 2
 
-    (f⁻ + f⁺)' * n⃗ / 2 - SVector(fp_ρ, fp_ρu⃗..., fp_ρe)
+    base_flux - SVector(fp_ρ, fp_ρu⃗..., fp_ρe)
   end
 
   function Atum.twopointflux(::Atum.EntropyConservativeFlux,

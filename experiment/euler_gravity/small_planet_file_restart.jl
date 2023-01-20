@@ -1,20 +1,28 @@
-using Atum, Atum.EulerTotalEnergy
-using Random, StaticArrays
+using Atum
+using Atum.EulerTotalEnergy
+using Random
+using StaticArrays
 using StaticArrays: SVector, MVector
-using WriteVTK, Statistics
-using BenchmarkTools, Revise
+using WriteVTK
+using Statistics
+using BenchmarkTools
+using Revise
 using CUDA
-using LinearAlgebra, ProgressBars, HDF5
+using LinearAlgebra
+using JLD2
+using BenchmarkTools
+using ProgressBars
+
 import Atum: boundarystate, source!
 
 statistic_save = true
+load_from_file = true
 
-include(pwd() * "/experiment/euler_gravity/sphere_utils.jl")
-include(pwd() * "/experiment/euler_gravity/interpolate.jl")
-include(pwd() * "/experiment/euler_gravity/sphere_statistics_functions.jl")
+include("sphere_utils.jl")
+include("interpolate.jl")
+include("sphere_statistics_functions.jl")
 
-# CURRENTLY DAMPING EVERYTHING
-const X = 80.0 # 20.0; # small planet parmaeter # X = 40 is interesting, X = 80 is stil good
+const X = 20.0; # small planet parmaeter # X = 40 is interesting
 
 hs_p = (
     a=6378e3 / X,
@@ -85,9 +93,9 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Nq⃗ = (7, 7, 7)
-Kv = 4 # 10     # 4
-Kh = 6 # 12 * 2 # 18 * 2
+Nq⃗ = (5, 5, 5)
+Kv = 6 # 4
+Kh = 12 # 18 * 2
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
@@ -120,6 +128,7 @@ cpu_state = fieldarray(undef, law, cpu_grid)
 cpu_state .= held_suarez_init.(cpu_x⃗, Ref(hs_p))
 gpu_components = components(state)
 cpu_components = components(cpu_state)
+
 for i in eachindex(gpu_components)
     gpu_components[i] .= A(cpu_components[i])
 end
@@ -198,17 +207,9 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     P = I - k * k' # technically should project out pressure normal
     source_ρu = -X * k_v * P * ρu # - top_sponge * ρu
 
-    # source_ρu = -X * k_v * ρu # damping everything is consistent with hydrostatic balance
+    # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -X * k_T * ρ * cv_d * (T - T_equil)
-    # source_ρe += (ρu' * source_ρu) / ρ
-
-    # coriolis = (k' * coriolis) * k # shallow coriolis
-
-    Ω = @SVector [-0, -0, 2π / 86400 * X]
-    tmp = k' * Ω
-    Ω = tmp * k
-    coriolis = -2Ω × ρu
-
+    source_ρe += (ρu' * source_ρu) / ρ
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -218,22 +219,27 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     return nothing
 end
 
+
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
+sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(1.0))
 sf_explicit = (RoeFlux(), RoeFlux(), RoeFlux())
 
+linearized_vf = Atum.LinearizedKennedyGruberFlux()
+linearized_sf = Atum.LinearizedRefanovFlux(1.0)
+
+dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
+dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 dg_explicit = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf_explicit)
 
 vcfl = 2 * 1.8 # 0.25
 hcfl = 1.8 # 0.25 # hcfl = 0.25 for a long run
-reset_cfl = 1.8 # resets the cfl when doin a long run
+reset_cfl = 0.15 # resets the cfl when doin a long run
 
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
 vdt = vcfl * Δz / c_max
 hdt = hcfl * Δx / c_max
-
-ΔΩ = minimum([Δx, Δy, Δz])
 dt = min(vdt, hdt)
 println(" the dt is ", dt)
 println(" the vertical cfl is ", dt * c_max / Δz)
@@ -252,7 +258,7 @@ zp = components(aux)[3]
 # test_state .= state
 endday = 30.0 * 40 / X
 tmp_ρ = components(test_state)[1]
-ρ̅_start = sum(tmp_ρ .* dg_explicit.MJ) / sum(dg_explicit.MJ)
+ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
 fmvar = mean_variables.(Ref(law), state, aux)
 fmvar .*= 0.0
@@ -290,105 +296,127 @@ meanlist = [A(zeros(size(xlist))) for i in 1:length(meanoldlist)]
 secondlist = [A(zeros(size(xlist))) for i in 1:length(secondoldlist)]
 gathermeanlist = copy(meanlist)
 gathersecondlist = copy(secondlist)
-##
-function kinetic_energy(state_components, MJ)
-    ρu = state_components[2]
-    ρv = state_components[3]
-    ρw = state_components[4]
-    ρ = state_components[1]
-    ke = 0.5 * sum((ρu .* ρu .+ ρv .* ρv .+ ρw .* ρw) .* MJ ./ ρ) / sum(MJ)
-    return return ke
-end
 
 ##
-# load markov chain 
-filename = "markov_model_even_time_nstate_" * string(100) * ".h5"
-fid = h5open(filename, "r")
-markov_array = read(fid["markov state "*string(100)])
-close(fid)
-state_components = components(test_state)
-for i in 1:5
-    state_components[i] .= CuArray(markov_array[:, :, i])
+display_skip = 50
+tic = Base.time()
+partitions = 1:endday*18*X# 24*3  # 1:24*endday*3 for updating every 20 minutes
+
+current_time = 0.0 # 
+save_partition = 1
+save_time = 0.0
+averaging_counter = 0.0
+statistic_counter = 0.0
+
+stable_cfl = []
+
+if load_from_file
+    
 end
 
-##
-# Can now run model 
-totes_sim = 1000 * 12 * 30 # * 12 * 20# 1000 is about 30 days
-time_jump = 5
-A_MJ = Array(dg_explicit.MJ)
-# observables = zeros(totes_sim, 11)
-T_observable = []
-for i in ProgressBar(1:totes_sim)
+state .= test_state
+
+# aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+# dg_explicit.auxstate .= aux
+#  the problem before was making sure that the aux state was correct
+
+#=
+for i in ProgressBar(partitions)
     aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+    # dg_fs.auxstate .= aux
+    # dg_sd.auxstate .= aux
     dg_explicit.auxstate .= aux
+    # odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
     odesolver = LSRK144(dg_explicit, test_state, dt)
-    end_time = time_jump * dt
-    solve!(test_state, end_time, odesolver, adjust_final=false)
-    state_components = components(test_state)
-    observables[i, 1] = kinetic_energy(state_components, dg_explicit.MJ)
-    state_components = Array.(components(test_state))
-    #=
-    for j in 1:5
-        observables[i, j+1] = sum(state_components[j] .* A_MJ, dims=1)[1] / sum(A_MJ, dims=1)[1]
+    end_time = 60 * 60 * 24 * endday / partitions[end]
+    state .= test_state
+    solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
+    # current reference state α = 1.0
+    # midpoint type extrapolation: α = 1.5
+    # backward euler type extrapolation: α = 2.0
+    α = 1.5 # 1.5
+    state .= α * (test_state) + (1 - α) * state
+
+    timeend = odesolver.time
+    global current_time += timeend
+
+    if statistic_save & (current_time / 86400 > 400 / X) & (i % 4 == 0)
+        println("gathering statistics at day ", current_time / 86400)
+        println("The counter is at ", statistic_counter)
+        global statistic_counter += 1.0
+        global fmvar .= mean_variables.(Ref(law), test_state, aux)
+
+        for (newf, oldf) in zip(meanlist, meanoldlist)
+            interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
+        end
+        second_moment_variables2!(secondlist, meanlist)
+
+        global gathermeanlist .+= meanlist
+        global gathersecondlist .+= secondlist
+
     end
-    for j in 1:5
-        observables[i, j+6] = state_components[j][1,1]
+
+    if i % display_skip == 0
+        println("--------")
+        println("done with ", display_skip * timeend / 60, " minutes")
+        println("partition ", i, " out of ", partitions[end])
+        local ρ, ρu, ρv, ρw, ρet = components(test_state)
+        u = ρu ./ ρ
+        v = ρv ./ ρ
+        w = ρw ./ ρ
+        println("maximum x-velocity ", maximum(u))
+        println("maximum y-velocity ", maximum(v))
+        println("maximum z-velocity ", maximum(w))
+        uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
+        minuʳ = minimum(uʳ)
+        maxuʳ = maximum(uʳ)
+        println("extrema vertical velocity ", (minuʳ, maxuʳ))
+        hs_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
+        hs_density = components(test_state)[1]
+        hs_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), hs_density, hs_pressure)
+        speed = @. sqrt(u^2 + v^2 + w^2)
+        c_max = maximum(hs_soundspeed)
+        mach_number = maximum(speed ./ hs_soundspeed)
+        println("The maximum soundspeed is ", c_max)
+        println("The largest mach number is ", mach_number)
+        println(" the vertical cfl is ", dt * c_max / Δz)
+        println(" the horizontal cfl is ", dt * c_max / Δx)
+        println("The dt is now ", dt)
+        println("The current day is ", current_time / 86400)
+        ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+        println("The average density of the system is ", ρ̅)
+        toc = Base.time()
+        println("The runtime for the simulation is ", (toc - tic) / 60, " minutes")
+
+        if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1]) | isnan(ρ̅)
+            println("The simulation NaNed, decreasing timestep and using stable state")
+            local i = save_partition
+            global current_time = save_time
+            test_state .= stable_state
+            state .= stable_state
+            global dt *= 0.9
+
+            global statistic_counter = 1
+            aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
+            global fmvar .= mean_variables.(Ref(law), test_state, aux)
+            global gathermeanlist .*= false
+            global gathersecondlist .*= false
+        else
+            if (abs(minuʳ) + abs(maxuʳ)) < 20.0
+                println("creating backup state")
+                stable_state .= test_state
+                global save_partition = i
+                global save_time = current_time
+                push!(stable_cfl, dt * c_max / Δx)
+            end
+            if statistic_counter > 40
+                reset_dt = reset_cfl * Δx / c_max
+                global dt = max(reset_dt, dt)
+                println("setting  dt to ", dt)
+            end
+        end
+        println("-----")
     end
-    =#
-    oldlist = components(mean_variables.(Ref(law), test_state, aux))
-    #=
-    newlist = [A(zeros(size(xlist))) for i in 1:length(oldlist)]
-    for (newf, oldf) in zip(newlist, oldlist)
-        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
-    end
-    =#
-    push!(T_observable, oldlist[end][1,1])
-    # push!(T_observable, Array(newlist[end])[:,:,1])
-    # candidate_state = convert_gpu_to_cpu(test_state)
-end
-##
-#=
-function pressure(law::EulerTotalEnergyLaw, state, aux)
-ρ, ρu⃗, ρe = unpackstate(law, state)
-Φ = geopotential(law, aux)
-γ = constants(law).γ
-return (γ - 1) * (ρe - ρu⃗' * ρu⃗ / 2ρ - ρ * Φ)
+
 end
 =#
-#=
-current_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
-geopotential_array = Atum.EulerTotalEnergy.geopotential.(Ref(law), aux)
-current_ρ =  components(test_state)[1]
-current_temperature = current_pressure ./  ( hs_p.R_d .* current_ρ)
-T_A = Array(current_temperature)
-Φ_A = Array(geopotential_array)
-p_A = Array(current_pressure)
-=#
-##
-#=
-using UnicodePlots
-lineplot(observables[:, 5])
-
-indexchoice = 8
-g⃗_t = observables[1:end, indexchoice]
-μ = mean(g⃗_t)
-
-timesteps = 2000
-autocor = zeros(timesteps)
-for i in 1:timesteps
-    autocor[i] = mean(g⃗_t[i:end] .* g⃗_t[1:end-i+1]) / μ^2 - 1
-end
-=#
-##
-
-#=
-filename = "observables_test_2.h5"
-fid = h5open(filename, "w")
-fid["observables"] = observables
-fid["dt"] = time_jump * dt
-fid["MJ"] = A_MJ
-close(fid)
-=#
-
-
-

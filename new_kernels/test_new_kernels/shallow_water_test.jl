@@ -67,7 +67,7 @@ cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 c = sqrt(constants(law).grav)
 dt = cfl * min_node_distance(grid) / c
 # timeend = @isdefined(_testing) ? 10dt : FT(200)
-timeend = 200.0 / 64
+timeend = 200.0 
 println("dt is ", dt)
 q = fieldarray(undef, law, grid)
 q .= bickleyjet.(Ref(law), points(grid))

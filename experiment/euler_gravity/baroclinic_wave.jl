@@ -280,6 +280,8 @@ for i in partitions
         println("The dt is now ", dt)
         ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
         println("The average density of the system is ", ρ̅)
+        toc = time()
+        println("The runtime for the simulation is ", (toc - tic)/60, " minutes")
         if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1])
             nothing
         else

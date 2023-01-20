@@ -43,7 +43,7 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
 
   cell = LobattoCell{FT,A}(Nq, Nq)
   v1d = range(FT(-2π), stop=FT(2π), length=K + 1)
-  grid = brickgrid(cell, (v1d, v1d); periodic=(true, false))
+  grid = brickgrid(cell, (v1d, v1d); periodic=(true, true))
 
   dg = DGSEM(; law, grid, volume_form,
     surface_numericalflux=RoeFlux())
@@ -52,8 +52,9 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
 
   c = sqrt(constants(law).grav)
   dt = cfl * min_node_distance(grid) / c
-  timeend = @isdefined(_testing) ? 10dt : FT(200)
-
+  # timeend = @isdefined(_testing) ? 10dt : FT(200)
+  timeend = 200.0
+  println("dt is ", dt)
   q = fieldarray(undef, law, grid)
   q .= bickleyjet.(Ref(law), points(grid))
 
@@ -64,30 +65,41 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
   end
 
   do_output = function (step, time, q)
-    if outputvtk && step % ceil(Int, timeend / 100 / dt) == 0
-      filename = "step$(lpad(step, 6, '0'))"
-      vtkfile = vtk_grid(joinpath(vtkdir, filename), grid)
-      P = Bennu.toequallyspaced(cell)
-      ρθ = last(components(q))
-      vtkfile["ρθ"] = vec(Array(P * ρθ))
-      vtk_save(vtkfile)
-      pvd[time] = vtkfile
+    if step % ceil(Int, timeend / 100 / dt) == 0
+      println(" currently on time ", time)
+      ρ, ρu, ρv = components(q)
+      println("extrema ", extrema(ρu))
     end
   end
+  # if outputvtk && step % ceil(Int, timeend / 100 / dt) == 0
+  # println(" currently on time ", time)
+  # filename = "step$(lpad(step, 6, '0'))"
+  # vtkfile = vtk_grid(joinpath(vtkdir, filename), grid)
+  # P = Bennu.toequallyspaced(cell)
+  # ρθ = last(components(q))
+  # vtkfile["ρθ"] = vec(Array(P * ρθ))
+  # vtk_save(vtkfile)
+  # pvd[time] = vtkfile
+  # end
+  # end
 
   odesolver = LSRK144(dg, q, dt)
 
   outputvtk && do_output(0, FT(0), q)
-  solve!(q, timeend, odesolver; after_step=do_output)
+  println("outputing now")
+  # solve!(q, timeend, odesolver; after_step=do_output)
+  solve!(q, timeend, odesolver)
+  ρ, ρu, ρv = components(q)
+  println("extrema ", extrema(ρu))
   outputvtk && vtk_save(pvd)
 end
 
 let
-  A = Array
+  A = CuArray
   FT = Float64
   N = 3
 
-  K = 16
+  K = 16 * 8
   tic = Base.time()
   run(A, FT, N, K, volume_form=FluxDifferencingForm(EntropyConservativeFlux()), outputvtk = false)
   toc = Base.time()
