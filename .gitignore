@@ -10,6 +10,8 @@
 *.png*
 *.h5*
 *.txt*
+*nsys*
+*sqlite*
 
 # Ignore Outputs
 *output*
