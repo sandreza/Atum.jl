@@ -251,8 +251,8 @@ module EulerGravity
       fρe = u⃗_avg * (ρ_avg * e_avg + p_avg)
 
       # fluctuation
-      α = ρ_avg / 2
-      fρu⃗ -= α * (Φ₁ - Φ₂) * I
+      α = (ρ₁ + ρ₂)/2
+      fρu⃗ += α * (Φ₂ - Φ₁)/2 * I
 
       hcat(fρ, fρu⃗, fρe)
   end

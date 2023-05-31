@@ -1,6 +1,7 @@
 using Atum
 using Atum.ShallowWater
 using Bennu: fieldarray
+using CUDA
 
 using StaticArrays: SVector
 using WriteVTK
@@ -51,9 +52,9 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
   cfl = FT(15 // 8) # for lsrk14, roughly a cfl of 0.125 per stage
 
   c = sqrt(constants(law).grav)
-  dt = cfl * min_node_distance(grid) / c
-  # timeend = @isdefined(_testing) ? 10dt : FT(200)
-  timeend = 200.0
+  dt = FT(cfl * min_node_distance(grid) / c)
+  timeend = @isdefined(_testing) ? 10dt : FT(1)
+  # timeend = 200.0
   println("dt is ", dt)
   q = fieldarray(undef, law, grid)
   q .= bickleyjet.(Ref(law), points(grid))
@@ -90,16 +91,16 @@ function run(A, FT, N, K; volume_form=WeakForm(), outputvtk=true)
   # solve!(q, timeend, odesolver; after_step=do_output)
   solve!(q, timeend, odesolver)
   ρ, ρu, ρv = components(q)
-  println("extrema ", extrema(ρu))
+  println("extrema ", extrema(Array(ρu)))
   outputvtk && vtk_save(pvd)
 end
 
 let
   A = CuArray
-  FT = Float64
+  FT = Float32
   N = 3
 
-  K = 16 * 8
+  K = 16*16
   tic = Base.time()
   run(A, FT, N, K, volume_form=FluxDifferencingForm(EntropyConservativeFlux()), outputvtk = false)
   toc = Base.time()

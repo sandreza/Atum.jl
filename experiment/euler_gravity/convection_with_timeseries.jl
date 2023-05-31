@@ -1,4 +1,4 @@
-using Atum, Atum.EulerGravity
+using Atum, Atum.EulerGravity, Bennu
 using Random, StaticArrays
 using StaticArrays: SVector, MVector
 using Statistics, Revise, CUDA, ProgressBars
@@ -56,6 +56,7 @@ function source!(law::EulerGravityLaw, source, state, aux, dim, directions)
     # source[2] += λ * damping_profile * ρu⃗[1]
     # source[3] += λ * damping_profile * ρu⃗[2]
     # source[4] += λ * damping_profile * ρu⃗[3]
+    # source[4] = -9.81 * ρ
     source[5] =  ρ * radiation_profile
 
     return nothing
@@ -91,7 +92,7 @@ A = CuArray
 FT = Float64 # N = 3, K = 50 looks nice
 N = 4
 
-K = 12 * 2
+K = 24 # 12 # 12 * 2 # 24 for paper case
 vf = FluxDifferencingForm(KennedyGruberFlux())
 println("DOFs = ", (N + 1) * K, " with VF ", vf)
 
@@ -144,7 +145,7 @@ thavg, wavg, ththavg, avgwth = compute_field_averages(newgrid, ξlist, elist, r,
 push!(thavg_timeseries, thavg)
 push!(avgwth_timeseries, avgwth)
 
-numloops = 5 * 60
+numloops = 5 * 60 # 5 * 60
 for i in ProgressBar(1:numloops )
     solve!(q, i * timeend, odesolver)
     thavg, wavg, ththavg, avgwth = compute_field_averages(newgrid, ξlist, elist, r, ω, q, grid)
@@ -168,6 +169,7 @@ begin
 end
 
 ##
+
 M = 200
 x, y, z = components(grid.points)
 zlist = range(minimum(z), maximum(z), length=M)
@@ -206,6 +208,7 @@ begin
     axislegend(ax1, position=:rt)
     display(mldepth_fig)
 end
+
 ##
 #=
 using HDF5

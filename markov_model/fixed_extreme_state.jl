@@ -21,7 +21,7 @@ if load_it
 end
 if save_it
     println("saving the file")
-    filename = "p2_markov_model_even_time_nstate_" * string(length(markov_states)) * "_extreme.h5"
+    filename = "p3_markov_model_even_time_nstate_" * string(length(markov_states)) * "_extreme.h5"
     fid = h5open(filename, "w")
     markov_array = zeros(size(markov_states[1][1])..., 5)
     save_ic = convert_gpu_to_cpu(test_state)
@@ -117,6 +117,14 @@ if save_it
     fid["time jump "] = time_jump
     fid["dt"] = dt
     fid["small planet factor"] = X
+    close(fid)
+    filename = "observable_list_" * string(length(markov_states)) * "_extreme.h5"
+    fid = h5open(filename, "w")
+    o_A = zeros(length(observable_list[1]), length(observable_list))
+    for i in 1:length(observable_list)
+        o_A[:, i] .= observable_list[i]
+    end
+    fid["observables"] = o_A
     close(fid)
 end
 

@@ -22,7 +22,9 @@ include(pwd() * "/experiment/euler_gravity/sphere_utils.jl")
 include(pwd() * "/experiment/euler_gravity/interpolate.jl")
 include(pwd() * "/experiment/euler_gravity/sphere_statistics_functions.jl")
 
-const X = 80.0 # 20.0; # small planet parameter # X = 40 is interesting
+# CURRENTLY DAMPING EVERYTHING
+const X = 80.0 # 20.0; # small planet parmaeter # X = 40 is interesting, X = 80 is stil good
+FT = Float64
 
 hs_p = (
     a=6378e3 / X,
@@ -39,6 +41,7 @@ hs_p = (
     gravc=6.67408e-11,
     mearth=5.9722e24,
 )
+hs_p = FT.(hs_p)
 # We take our initial condition to be an isothermal atmosphere at rest 
 # this allows for a gentle and stable start to the simulation where we can 
 # test things like hydrostatic balance
@@ -93,9 +96,9 @@ dim = 3
 FT = Float64
 A = CuArray
 
-Nq⃗ = (5, 5, 5)
-Kv = 8 # 10     # 4
-Kh = 9 # 12 * 2 # 18 * 2
+Nq⃗ = (7, 7, 7)
+Kv = 4 # 10     # 4
+Kh = 6 # 12 * 2 # 18 * 2
 
 law = EulerTotalEnergyLaw{FT,dim}()
 cell = LobattoCell{FT,A}(Nq⃗[1], Nq⃗[2], Nq⃗[3])
@@ -171,10 +174,10 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     T_min = FT(200)
     σ_b = FT(7 / 10)
 
-    pₛ = 1e5
-    R_d = 287
-    cp_d = 287 / (1 - 1 / 1.4)
-    cv_d = 287 / (1 - 1 / 1.4) - 287.0
+    pₛ = FT(1e5)
+    R_d = FT(287)
+    cp_d = FT(287 / (1 - 1 / 1.4))
+    cv_d = FT(287 / (1 - 1 / 1.4) - 287.0)
 
     x = aux[1]
     y = aux[2]
@@ -206,18 +209,17 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     P = I - k * k' # technically should project out pressure normal
     source_ρu = -X * k_v * P * ρu # - top_sponge * ρu
 
-    # source_ρu = -k_v * ρu # damping everything is consistent with hydrostatic balance
+    # source_ρu = -X * k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -X * k_T * ρ * cv_d * (T - T_equil)
-    # source_ρe += (ρu' * source_ρu) / ρ # inconsistent thermodynamics, but consistent with original paper
+    # source_ρe += (ρu' * source_ρu) / ρ
 
     # coriolis = (k' * coriolis) * k # shallow coriolis
-    #=
-    Ω = @SVector [-0, -0, 2π / 86400 * X]
+
+    Ω = @SVector [-0, -0, FT(2π / 86400 * X)]
     tmp = k' * Ω
     Ω = tmp * k
     coriolis = -2Ω × ρu
-    =#
-    
+
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -270,9 +272,9 @@ endday = 30.0 * 40 / X
 tmp_ρ = components(test_state)[1]
 ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
 
-fmvar = mean_variables_favre.(Ref(law), state, aux)
+fmvar = mean_variables.(Ref(law), state, aux)
 fmvar .*= 0.0
-smvar = second_moment_variables_favre.(fmvar)
+smvar = second_moment_variables.(fmvar)
 
 ##
 # interpolate fields 
@@ -348,12 +350,12 @@ for i in ProgressBar(partitions)
         println("gathering statistics at day ", current_time / 86400)
         println("The counter is at ", statistic_counter)
         global statistic_counter += 1.0
-        global fmvar .= mean_variables_favre.(Ref(law), test_state, aux)
+        global fmvar .= mean_variables.(Ref(law), test_state, aux)
 
         for (newf, oldf) in zip(meanlist, meanoldlist)
             interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
         end
-        second_moment_variables_favre!(secondlist, meanlist)
+        second_moment_variables2!(secondlist, meanlist)
 
         global gathermeanlist .+= meanlist
         global gathersecondlist .+= secondlist
@@ -402,7 +404,7 @@ for i in ProgressBar(partitions)
 
             global statistic_counter = 1
             aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
-            global fmvar .= mean_variables_favre.(Ref(law), test_state, aux)
+            global fmvar .= mean_variables.(Ref(law), test_state, aux)
             global gathermeanlist .*= false
             global gathersecondlist .*= false
         else
@@ -423,58 +425,3 @@ for i in ProgressBar(partitions)
     end
 
 end
-
-##
-
-toc = Base.time()
-println("The time for the simulation is ", toc - tic, " seconds")
-println("The time for the simulation is ", (toc - tic) / (60), " minutes")
-println("The time for the simulation is ", (toc - tic) / (60 * 60), " hours")
-# normalize statistics
-gathermeanlist .*= 1 / statistic_counter
-gathersecondlist .*= 1 / (statistic_counter - 1)
-
-#=
-filepath = "SmallHeldSuarezStatisticsFavre_" * "Nev" * string(Kv) * "_Neh" * string(Kh)
-filepath = filepath * "_Nq1_" * string(Nq⃗[1]) * "_Nq2_" * string(Nq⃗[2])
-filepath = filepath * "_Nq3_" * string(Nq⃗[3]) * "_X_" * string(X) * ".jld2"
-
-# fmnames = ("ρ", "u", "v", "w", "p", "T")
-# smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT")
-
-## Favre Names
-fmnames = ("ρ", "u", "v", "w", "p", "T", "ρu", "ρv", "ρw", "ρT")
-smnames = ("uu", "vv", "ww", "uv", "uw", "vw", "uT", "vT", "wT", "ρρ", "pp", "TT", "ρuu", "ρvv", "ρww", "ρuv", "ρTT", "ρvT")
-file = jldopen(filepath, "a+")
-JLD2.Group(file, "instantaneous")
-JLD2.Group(file, "firstmoment")
-JLD2.Group(file, "secondmoment")
-JLD2.Group(file, "grid")
-
-# first moment
-for (i, statename) in enumerate(fmnames)
-    file["firstmoment"][statename] = Array(gathermeanlist[i])
-end
-# instantaneous (don't forget to interpolate)
-fmvar .= mean_variables_favre.(Ref(law), test_state, aux)
-for (newf, oldf) in zip(meanlist, meanoldlist)
-    interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
-end
-for (i, statename) in enumerate(fmnames)
-    file["instantaneous"][statename] = Array(meanlist[i])
-end
-
-# Second moment
-for (i, statename) in enumerate(smnames)
-    file["secondmoment"][statename] = Array(gathersecondlist[i])
-end
-
-file["grid"]["vertical_coordinate"] = vert_coord
-file["grid"]["gauss_lobatto_points"] = Nq⃗
-file["grid"]["vertical_element_number"] = Kv
-file["grid"]["horizontal_element_number"] = Kh
-file["parameters"] = hs_p
-
-close(file)
-=#
-println("done")

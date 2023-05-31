@@ -61,8 +61,8 @@ end
 ##
 # interpolate fields 
 println("precomputing interpolation data")
-scale = 4
-rlist = range(vert_coord[1] + 000, vert_coord[end], length=15 * scale)
+scale = 1
+rlist = range(vert_coord[1] + 000, vert_coord[end], length=3 * scale)
 θlist = range(-π, π, length=90 * scale)
 ϕlist = range(0, π, length=45 * scale)
 
@@ -149,50 +149,3 @@ hfile2["thetalist"] = collect(θlist)
 hfile2["philist"] = collect(ϕlist)
 close(hfile2)
 
-
-##
-#=
-interpolated_markov_state = zeros(size(xlist)..., 5)
-hfile = h5open("interpolated_fields_n400.h5", "w")
-hfile2 = h5open("raw_fields_n400.h5", "w")
-for (i, state) in ProgressBar(enumerate(markov_states))
-    for s in 1:5
-        oldf = view(state, :, :, s)
-        newf = view(interpolated_markov_state, :, :, :, s)
-        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CPU())
-    end
-    hfile["interpolated markov state $i"] = interpolated_markov_state
-    for i in 1:size(state)[1], j in 1:size(state)[2]
-        sphere_state[i, j, :] .= mean_variables(state[i, j, :], x⃗[i, j], Φ[i, j])
-    end
-    hfile2["sphere markov state $i"] = sphere_state
-    for s in 1:5
-        oldf = view(sphere_state, :, :, s)
-        newf = view(interpolated_markov_state, :, :, :, s)
-        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CPU())
-    end
-    hfile["interpolated sphere markov state $i"] = interpolated_markov_state
-end
-hfile2["geopotential"] = Φ
-hfile["rlist"] = collect(rlist)
-hfile["thetalist"] = collect(θlist)
-hfile["philist"] = collect(ϕlist)
-close(hfile2)
-close(hfile)
-
-##
-hfile = h5open("interpolated_fields_n400.h5", "r")
-hfile2 = h5open("viz_fields.h5", "w")
-
-for i in 1:400
-    markov_state = read(hfile["interpolated sphere markov state $i"])
-    hfile2["zonal mean zonal wind $i"] = mean(markov_state[:, :, :, 1], dims=1)[:, :, :]
-    hfile2["pressure $i"] = mean(markov_state[:, :, :, 4], dims=1)[:, :, :]
-    hfile2["surface field $i"] = markov_state[:, :, 1, :]
-end
-hfile2["rlist"] = collect(rlist)
-hfile2["thetalist"] = collect(θlist)
-hfile2["philist"] = collect(ϕlist)
-close(hfile)
-close(hfile2)
-=#

@@ -24,6 +24,7 @@ include(pwd() * "/experiment/euler_gravity/sphere_statistics_functions.jl")
 
 # CURRENTLY DAMPING EVERYTHING
 const X = 80.0 # 20.0; # small planet parmaeter # X = 40 is interesting, X = 80 is stil good
+FT = Float64
 
 hs_p = (
     a=6378e3 / X,
@@ -40,6 +41,7 @@ hs_p = (
     gravc=6.67408e-11,
     mearth=5.9722e24,
 )
+hs_p = FT.(hs_p)
 # We take our initial condition to be an isothermal atmosphere at rest 
 # this allows for a gentle and stable start to the simulation where we can 
 # test things like hydrostatic balance
@@ -172,10 +174,10 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     T_min = FT(200)
     σ_b = FT(7 / 10)
 
-    pₛ = 1e5
-    R_d = 287
-    cp_d = 287 / (1 - 1 / 1.4)
-    cv_d = 287 / (1 - 1 / 1.4) - 287.0
+    pₛ = FT(1e5)
+    R_d = FT(287)
+    cp_d = FT(287 / (1 - 1 / 1.4))
+    cv_d = FT(287 / (1 - 1 / 1.4) - 287.0)
 
     x = aux[1]
     y = aux[2]
@@ -213,7 +215,7 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
 
     # coriolis = (k' * coriolis) * k # shallow coriolis
 
-    Ω = @SVector [-0, -0, 2π / 86400 * X]
+    Ω = @SVector [-0, -0, FT(2π / 86400 * X)]
     tmp = k' * Ω
     Ω = tmp * k
     coriolis = -2Ω × ρu
@@ -438,6 +440,12 @@ for i in eachindex(dustates)
 end
 close(fid)
 
+
+fid = h5open("gridinfo.h5", "w")
+x,y,z = components(points(cpu_grid))
+fid["x"] = x 
+fid["y"] = y 
+fid["z"] = z
 
 ##
 toc = Base.time()
