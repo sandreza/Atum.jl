@@ -16,7 +16,9 @@ using HDF5
 
 import Atum: boundarystate, source!
 
-statistic_save = true
+spinup = true
+grab_states = true
+compute_embedding = true
 
 include(pwd() * "/experiment/euler_gravity/sphere_utils.jl")
 include(pwd() * "/experiment/euler_gravity/interpolate.jl")
@@ -41,7 +43,7 @@ hs_p = (
     gravc=6.67408e-11,
     mearth=5.9722e24,
 )
-hs_p = FT.(hs_p)
+# hs_p = Tuple([FT(hs) for hs in hs_p])
 # We take our initial condition to be an isothermal atmosphere at rest 
 # this allows for a gentle and stable start to the simulation where we can 
 # test things like hydrostatic balance
@@ -156,7 +158,6 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     # Extract the state
     ρ, ρu, ρe = EulerTotalEnergy.unpackstate(law, state)
     Φ = EulerTotalEnergy.geopotential(law, aux)
-    # _, source_ρu⃗, _ = EulerTotalEnergy.unpackstate(law, source)
     FT = Float64
 
     # First Coriolis 
@@ -200,26 +201,17 @@ function source!(law::EulerTotalEnergyLaw, source, state, aux, dim, directions)
     k_T = k_a + (k_s - k_a) * height_factor * cos(φ) * cos(φ) * cos(φ) * cos(φ)
     k_v = k_f * height_factor
 
-    # sponge top 
-    # Htop = 6378e3 + 3e4
-    # top_sponge = k_f * exp(-(Htop - z)/2e3) * 3 # only tried with /1e3 
-
     # horizontal projection option
     k = coord / norm(coord)
     P = I - k * k' # technically should project out pressure normal
     source_ρu = -X * k_v * P * ρu # - top_sponge * ρu
 
-    # source_ρu = -X * k_v * ρu # damping everything is consistent with hydrostatic balance
     source_ρe = -X * k_T * ρ * cv_d * (T - T_equil)
-    # source_ρe += (ρu' * source_ρu) / ρ
-
-    # coriolis = (k' * coriolis) * k # shallow coriolis
 
     Ω = @SVector [-0, -0, FT(2π / 86400 * X)]
     tmp = k' * Ω
     Ω = tmp * k
     coriolis = -2Ω × ρu
-
 
     source[2] = coriolis[1] + source_ρu[1]
     source[3] = coriolis[2] + source_ρu[2]
@@ -231,26 +223,18 @@ end
 
 
 vf = (KennedyGruberFlux(), KennedyGruberFlux(), KennedyGruberFlux())
-sf = (RoeFlux(), RoeFlux(), Atum.RefanovFlux(1.0))
 sf_explicit = (RoeFlux(), RoeFlux(), RoeFlux())
 
-linearized_vf = Atum.LinearizedKennedyGruberFlux()
-linearized_sf = Atum.LinearizedRefanovFlux(1.0)
-
-dg_sd = SingleDirection(; law, grid, volume_form=linearized_vf, surface_numericalflux=linearized_sf)
-dg_fs = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf)
 dg_explicit = FluxSource(; law, grid, volume_form=vf, surface_numericalflux=sf_explicit)
 
 vcfl = 2 * 1.8 # 0.25
 hcfl = 1.8 # 0.25 # hcfl = 0.25 for a long run
-reset_cfl = 1.8 # resets the cfl when doin a long run
 
 Δx = min_node_distance(grid, dims=1)
 Δy = min_node_distance(grid, dims=2)
 Δz = min_node_distance(grid, dims=3)
 vdt = vcfl * Δz / c_max
 hdt = hcfl * Δx / c_max
-
 ΔΩ = minimum([Δx, Δy, Δz])
 dt = min(vdt, hdt)
 println(" the dt is ", dt)
@@ -270,7 +254,7 @@ zp = components(aux)[3]
 # test_state .= state
 endday = 30.0 * 40 / X
 tmp_ρ = components(test_state)[1]
-ρ̅_start = sum(tmp_ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
+ρ̅_start = sum(tmp_ρ .* dg_explicit.MJ) / sum(dg_explicit.MJ)
 
 fmvar = mean_variables.(Ref(law), state, aux)
 fmvar .*= 0.0
@@ -279,7 +263,7 @@ smvar = second_moment_variables.(fmvar)
 ##
 # interpolate fields 
 println("precomputing interpolation data")
-scale = 4
+scale = 1
 rlist = range(vert_coord[1] + 000, vert_coord[end], length=15 * scale)
 θlist = range(-π, π, length=90 * scale)
 ϕlist = range(0, π, length=45 * scale)
@@ -310,118 +294,48 @@ gathermeanlist = copy(meanlist)
 gathersecondlist = copy(secondlist)
 
 ##
-display_skip = 50
 tic = Base.time()
-partitions = 1:endday*18*X# 24*3  # 1:24*endday*3 for updating every 20 minutes
-
-current_time = 0.0 # 
-save_partition = 1
-save_time = 0.0
-averaging_counter = 0.0
-statistic_counter = 0.0
-
-stable_cfl = []
-
 state .= test_state
 
-# aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
-# dg_explicit.auxstate .= aux
+if spinup == true
+    partitions = 1:10
+    for i in ProgressBar(partitions)
+        aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+        dg_explicit.auxstate .= aux
+        odesolver = LSRK144(dg_explicit, test_state, dt)
+        end_time = 86400 * 365 / X / 100
+        state .= test_state
+        solve!(test_state, end_time, odesolver, adjust_final=false) 
+    end
+    hfile = h5open("starting_state.hdf5", "w")
+    starting_state = Array{Float32}(components(test_state)[1].parent)
+    hfile["starting_state"] = starting_state
+    close(hfile)
+else 
+    hfile = h5open("starting_state.hdf5", "r")
+    starting_state = read(hfile["starting_state"])
+    close(hfile)
+    for (i, component) in enumerate(components(test_state))
+        component .= CuArray{Float64}(starting_state[:,i, :])
+    end
+end
+
 #  the problem before was making sure that the aux state was correct
-for i in ProgressBar(partitions)
-    aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
-    # dg_fs.auxstate .= aux
-    # dg_sd.auxstate .= aux
-    dg_explicit.auxstate .= aux
-    # odesolver = ARK23(dg_fs, dg_sd, fieldarray(test_state), dt; split_rhs=false, paperversion=false)
-    odesolver = LSRK144(dg_explicit, test_state, dt)
-    end_time = 60 * 60 * 24 * endday / partitions[end]
-    state .= test_state
-    solve!(test_state, end_time, odesolver, adjust_final=false) # otherwise last step is wrong since linear solver isn't updated
-    # current reference state α = 1.0
-    # midpoint type extrapolation: α = 1.5
-    # backward euler type extrapolation: α = 2.0
-    α = 1.5 # 1.5
-    state .= α * (test_state) + (1 - α) * state
+if grab_states == true
+    for i in ProgressBar(partitions)
+        aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+        dg_explicit.auxstate .= aux
+        odesolver = LSRK144(dg_explicit, test_state, dt)
+        end_time = 5 * dt
+        state .= test_state
+        solve!(test_state, end_time, odesolver, adjust_final=false) 
 
-    timeend = odesolver.time
-    global current_time += timeend
+        fmvar .= mean_variables.(Ref(law), test_state, aux)
+        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
 
-    if statistic_save & (current_time / 86400 > 400 / X) & (i % 4 == 0)
-        println("gathering statistics at day ", current_time / 86400)
-        println("The counter is at ", statistic_counter)
-        global statistic_counter += 1.0
-        global fmvar .= mean_variables.(Ref(law), test_state, aux)
-
-        for (newf, oldf) in zip(meanlist, meanoldlist)
-            interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
+        if i % display_skip == 0
+            println("-----")
         end
-        second_moment_variables2!(secondlist, meanlist)
-
-        global gathermeanlist .+= meanlist
-        global gathersecondlist .+= secondlist
 
     end
-
-    if i % display_skip == 0
-        println("--------")
-        println("done with ", display_skip * timeend / 60, " minutes")
-        println("partition ", i, " out of ", partitions[end])
-        local ρ, ρu, ρv, ρw, ρet = components(test_state)
-        u = ρu ./ ρ
-        v = ρv ./ ρ
-        w = ρw ./ ρ
-        println("maximum x-velocity ", maximum(u))
-        println("maximum y-velocity ", maximum(v))
-        println("maximum z-velocity ", maximum(w))
-        uʳ = @. (xp * u + yp * v + zp * w) / sqrt(xp^2 + yp^2 + zp^2)
-        minuʳ = minimum(uʳ)
-        maxuʳ = maximum(uʳ)
-        println("extrema vertical velocity ", (minuʳ, maxuʳ))
-        hs_pressure = Atum.EulerTotalEnergy.pressure.(Ref(law), test_state, aux)
-        hs_density = components(test_state)[1]
-        hs_soundspeed = Atum.EulerTotalEnergy.soundspeed.(Ref(law), hs_density, hs_pressure)
-        speed = @. sqrt(u^2 + v^2 + w^2)
-        c_max = maximum(hs_soundspeed)
-        mach_number = maximum(speed ./ hs_soundspeed)
-        println("The maximum soundspeed is ", c_max)
-        println("The largest mach number is ", mach_number)
-        println(" the vertical cfl is ", dt * c_max / Δz)
-        println(" the horizontal cfl is ", dt * c_max / Δx)
-        println("The dt is now ", dt)
-        println("The current day is ", current_time / 86400)
-        ρ̅ = sum(ρ .* dg_fs.MJ) / sum(dg_fs.MJ)
-        println("The average density of the system is ", ρ̅)
-        toc = Base.time()
-        println("The runtime for the simulation is ", (toc - tic) / 60, " minutes")
-
-        if isnan(ρ[1]) | isnan(ρu[1]) | isnan(ρv[1]) | isnan(ρw[1]) | isnan(ρet[1]) | isnan(ρ̅)
-            println("The simulation NaNed, decreasing timestep and using stable state")
-            local i = save_partition
-            global current_time = save_time
-            test_state .= stable_state
-            state .= stable_state
-            global dt *= 0.9
-
-            global statistic_counter = 1
-            aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, test_state)
-            global fmvar .= mean_variables.(Ref(law), test_state, aux)
-            global gathermeanlist .*= false
-            global gathersecondlist .*= false
-        else
-            if (abs(minuʳ) + abs(maxuʳ)) < 20.0
-                println("creating backup state")
-                stable_state .= test_state
-                global save_partition = i
-                global save_time = current_time
-                push!(stable_cfl, dt * c_max / ΔΩ)
-            end
-            if statistic_counter > 40
-                reset_dt = reset_cfl * ΔΩ / c_max
-                global dt = max(reset_dt, dt)
-                println("setting  dt to ", dt)
-            end
-        end
-        println("-----")
-    end
-
 end

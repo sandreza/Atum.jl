@@ -12,6 +12,7 @@
 *.txt*
 *nsys*
 *sqlite*
+*.hdf5
 
 # Ignore Outputs
 *output*
