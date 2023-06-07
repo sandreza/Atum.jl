@@ -16,8 +16,8 @@ using HDF5
 
 import Atum: boundarystate, source!
 
-spinup = true
-grab_states = true
+spinup = false
+grab_states = false
 compute_embedding = true
 
 include(pwd() * "/experiment/euler_gravity/sphere_utils.jl")
@@ -264,9 +264,11 @@ smvar = second_moment_variables.(fmvar)
 # interpolate fields 
 println("precomputing interpolation data")
 scale = 1
-rlist = range(vert_coord[1] + 000, vert_coord[end], length=15 * scale)
-θlist = range(-π, π, length=90 * scale)
-ϕlist = range(0, π, length=45 * scale)
+θlength = 32 
+ϕlength = 32
+rlist = range(vert_coord[1] + 000, vert_coord[end], length= 3 * scale)
+θlist = range(-π, π, length = θlength)
+ϕlist = range(0,  π, length = ϕlength)
 
 xlist = [sphericaltocartesian(θ, ϕ, r) for θ in θlist, ϕ in ϕlist, r in rlist]
 
@@ -283,6 +285,7 @@ d_elist = A(elist)
 d_ξlist = A(ξlist)
 r = Tuple([cell.points_1d[i][:] for i in eachindex(cell.points_1d)])
 ω = Tuple([A(baryweights(cell.points_1d[i][:])) for i in eachindex(cell.points_1d)])
+newf = A(zeros(size(xlist)))
 
 oldlist = components(test_state)
 
@@ -320,22 +323,65 @@ else
     end
 end
 
-#  the problem before was making sure that the aux state was correct
+#  grab markov states as one week decorrelated states
+number_of_markov_states = 10;
+gl_n, e_n = size(components(test_state)[1]);
+markov_states = zeros(Float32, size(xlist)..., length(components(mean_variables.(Ref(law), test_state, aux))), number_of_markov_states);
 if grab_states == true
-    for i in ProgressBar(partitions)
+    for i in ProgressBar(1:number_of_markov_states)
         aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
         dg_explicit.auxstate .= aux
         odesolver = LSRK144(dg_explicit, test_state, dt)
-        end_time = 5 * dt
+        end_time = 86400 * 7 / X
         state .= test_state
         solve!(test_state, end_time, odesolver, adjust_final=false) 
 
         fmvar .= mean_variables.(Ref(law), test_state, aux)
-        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
-
-        if i % display_skip == 0
-            println("-----")
+        for (j, component) in enumerate(components(fmvar))
+            oldf = component
+            interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
+            markov_states[:, :, :, j, i] .= Array{Float32}(newf)
         end
-
     end
+    normalization = [maximum(abs.(markov_states[:, :, :, i, :])) for i in 1:size(markov_states)[4]]
+    rlist_v = Float32.(rlist)
+    θlist_v = Float32.(θlist)
+    ϕlist_v = Float32.(ϕlist)
+    hfile = h5open("markov_state.hdf5", "w")
+    hfile["markov_states"] = markov_states
+    hfile["normalization"] = normalization
+    hfile["r"] = rlist_v
+    hfile["theta"] = θlist_v
+    hfile["phi"] = ϕlist_v
+    close(hfile)
+end
+
+hfile = h5open("markov_state.hdf5", "r")
+temperature_states = read(hfile["markov_states"])[:, :, 1, end, :]
+close(hfile)
+
+steps = 60000
+markov_indices = zeros(Int, steps)
+labeled_states = zeros(eltype(temperature_states), size(temperature_states)[1:end-1]..., steps)
+if compute_embedding == true
+    for i in ProgressBar(1:steps)
+        aux = sphere_auxiliary.(Ref(law), Ref(hs_p), x⃗, state)
+        dg_explicit.auxstate .= aux
+        odesolver = LSRK144(dg_explicit, test_state, dt)
+        end_time = 86400 / X / 6
+        state .= test_state
+        solve!(test_state, end_time, odesolver, adjust_final=false) 
+
+        fmvar .= mean_variables.(Ref(law), test_state, aux)
+        oldf = components(fmvar)[end]
+        interpolate_field!(newf, oldf, d_elist, d_ξlist, r, ω, Nq⃗, arch=CUDADevice())
+        newf_A = Array{Float32}(newf)[:,:,1]
+        markov_index = argmin([norm(newf_A .- temperature_states[:, :, i]) for i in 1:size(temperature_states)[3]])
+        markov_indices[i] = markov_index
+        labeled_states[:, :, i] .= newf_A
+    end
+    hfile = h5open("embedding.hdf5", "w")
+    hfile["states"] = labeled_states
+    hfile["labels"] = markov_indices
+    close(hfile)
 end
